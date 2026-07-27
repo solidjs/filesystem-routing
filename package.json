@@ -2,7 +2,7 @@
   "name": "filesystem-routing",
   "description": "Router-neutral file-system routing: scans a route directory into a neutral route manifest with pluggable conventions and delivery adapters",
   "license": "MIT",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Ryan Carniato",
   "homepage": "https://github.com/solidjs/filesystem-routing#readme",
   "repository": {
