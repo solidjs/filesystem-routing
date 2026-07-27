@@ -453,7 +453,7 @@ export function treeShake(): Plugin {
     }
   }
   return {
-    name: "filesystem-routes:tree-shake",
+    name: "filesystem-routing:tree-shake",
     enforce: "pre",
     async transform(code, id) {
       const [path, queryString] = id.split("?");

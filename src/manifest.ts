@@ -6,7 +6,7 @@
  * module refs and export info, but says nothing about how a router turns
  * those into its own route definitions. Each router ships a small emission
  * adapter for that (e.g. `@solidjs/router/fs` emits `RouteDefinition`s),
- * and each bundler ships a delivery adapter (e.g. `filesystem-routes/vite`
+ * and each bundler ships a delivery adapter (e.g. `filesystem-routing/vite`
  * serializes the manifest into a virtual module).
  */
 

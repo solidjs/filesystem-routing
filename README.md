@@ -1,4 +1,4 @@
-# filesystem-routes
+# filesystem-routing
 
 Router-neutral file-system routing.
 
@@ -10,9 +10,9 @@ a delivery adapter that materializes the manifest into code.
 
 | Piece | Owner |
 | --- | --- |
-| Scanning, filename convention, neutral route manifest | `filesystem-routes` |
-| Nesting + `(group)` stripping | `filesystem-routes/tree` |
-| Vite delivery (virtual module, HMR, code splitting, build inputs) | `filesystem-routes/vite` |
+| Scanning, filename convention, neutral route manifest | `filesystem-routing` |
+| Nesting + `(group)` stripping | `filesystem-routing/tree` |
+| Vite delivery (virtual module, HMR, code splitting, build inputs) | `filesystem-routing/vite` |
 | `RouteDefinition` emission | `@solidjs/router/fs` |
 | Request handling for `GET`/`POST` routes, middleware | `@solidjs/start` |
 
@@ -25,7 +25,7 @@ from whatever id you pass as `fileRoutes({ moduleId })`.
 
 ```ts
 // vite.config.ts
-import { fileRoutes } from "filesystem-routes/vite";
+import { fileRoutes } from "filesystem-routing/vite";
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
@@ -113,8 +113,8 @@ routes through its `route.tsx` module and co-locates everything else in the
 folder without routing it. Pass the router to the plugin:
 
 ```ts
-import { FlatFileSystemRouter } from "filesystem-routes";
-import { fileRoutes } from "filesystem-routes/vite";
+import { FlatFileSystemRouter } from "filesystem-routing";
+import { fileRoutes } from "filesystem-routing/vite";
 import { resolve } from "node:path";
 
 fileRoutes({
@@ -205,8 +205,8 @@ level it needs:
 Pass either as config for one-off tweaks:
 
 ```ts
-import { PageFileSystemRouter } from "filesystem-routes";
-import { fileRoutes } from "filesystem-routes/vite";
+import { PageFileSystemRouter } from "filesystem-routing";
+import { fileRoutes } from "filesystem-routing/vite";
 
 fileRoutes({
   toPath: routeFile => (routeFile.endsWith(".page") ? routeFile.slice(0, -5) : undefined)
@@ -244,7 +244,7 @@ import routes, { pageRoutes } from "virtual:file-routes";
 
 `routes` is the flat manifest; `pageRoutes` is the page entries nested by path
 with `(group)` segments stripped, so emission adapters don't each reimplement
-the tree (`buildRouteTree` from `filesystem-routes/tree` is the same
+the tree (`buildRouteTree` from `filesystem-routing/tree` is the same
 function, for consumers holding only a flat manifest). An emission adapter is
 a function taking manifest entries and returning the router's shape — see
 `fileRoutes` in `@solidjs/router/fs` for Solid Router's, a ~30 line adapter
@@ -252,7 +252,7 @@ other routers can mirror. Adapters take the manifest as an argument rather
 than importing the virtual module, so they work standalone and with custom
 module ids.
 
-Add `/// <reference types="filesystem-routes/types" />` to type the import.
+Add `/// <reference types="filesystem-routing/types" />` to type the import.
 
 ### Keeping path-derived types alive
 
@@ -266,7 +266,7 @@ literal tuple, regenerating it as routes come and go:
 fileRoutes({ types: "file-routes.d.ts" })
 ```
 
-Reference the generated file instead of `filesystem-routes/types` — it is
+Reference the generated file instead of `filesystem-routing/types` — it is
 self-contained, and two declarations of the same module conflict. Emission
 adapters then have to preserve the tuple on the way through, which means a
 mapping typed over its input rather than a plain `.map`:

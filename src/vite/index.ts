@@ -62,13 +62,13 @@ export interface FileRoutesOptions extends Pick<
    *
    * `true` writes `file-routes.d.ts` next to the Vite root; pass a path to
    * put it elsewhere. The generated file is self-contained — reference it
-   * *instead of* `filesystem-routes/types`, never both.
+   * *instead of* `filesystem-routing/types`, never both.
    */
   types?: boolean | string;
 }
 
 /**
- * The Vite delivery adapter for `filesystem-routes`.
+ * The Vite delivery adapter for `filesystem-routing`.
  *
  * Serializes the neutral route manifest into the virtual module — module refs
  * become code-split dynamic imports (`$`-prefixed keys) or eagerly required
@@ -136,7 +136,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
 
   return [
     {
-      name: "filesystem-routes",
+      name: "filesystem-routing",
       enforce: "pre",
       config() {
         // Packages importing the virtual module (which only this plugin can
