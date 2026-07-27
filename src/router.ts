@@ -1,6 +1,6 @@
 import fg from "fast-glob";
 import micromatch from "micromatch";
-import { posix, sep } from "node:path";
+import { posix, resolve, sep } from "node:path";
 
 import type { RouteManifestEntry } from "./manifest.ts";
 
@@ -12,7 +12,10 @@ export function normalizePath(path: string) {
 }
 
 export interface FileSystemRouterConfig {
-  /** Absolute path of the route directory to scan. */
+  /**
+   * Route directory to scan. Relative paths are resolved against the
+   * current working directory.
+   */
   dir: string;
   /** File extensions (without the dot) that participate in routing. */
   extensions: string[];
@@ -54,7 +57,10 @@ export class BaseFileSystemRouter extends EventTarget {
   constructor(config: FileSystemRouterConfig) {
     super();
     this.routes = [];
-    this.config = config;
+    // A relative dir would glob fine, but the matched files come back
+    // absolute and would then fail `isRoute`'s micromatch against the
+    // relative pattern, silently yielding zero routes.
+    this.config = { ...config, dir: normalizePath(resolve(config.dir)) };
   }
 
   glob() {

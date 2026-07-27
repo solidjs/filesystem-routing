@@ -75,6 +75,22 @@ describe("PageFileSystemRouter", () => {
     expect(post.$$route?.pick).toEqual(["route"]);
   });
 
+  it("resolves a relative dir against the current working directory", async () => {
+    const dir = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;",
+      "blog/[id].tsx": "export default () => <h1>Post</h1>;"
+    });
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const router = new PageFileSystemRouter({ dir: ".", extensions: ["tsx"] });
+      const paths = (await router.getRoutes()).map(route => route.path).sort();
+      expect(paths).toEqual(["/", "/blog/:id"]);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   it("updates the manifest when files change or are removed", async () => {
     const dir = createRouteTree({
       "index.tsx": "export default () => <h1>Home</h1>;"
