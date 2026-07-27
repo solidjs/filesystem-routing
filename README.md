@@ -1,4 +1,4 @@
-# vite-file-routes
+# filesystem-routes
 
 Router-neutral file-system routing.
 
@@ -10,10 +10,10 @@ a delivery adapter that materializes the manifest into code.
 
 | Piece | Owner |
 | --- | --- |
-| Scanning, filename convention, neutral route manifest | `vite-file-routes` |
-| Nesting + `(group)` stripping | `vite-file-routes/tree` |
-| Vite delivery (virtual module, HMR, code splitting, build inputs) | `vite-file-routes/vite` |
-| `RouteDefinition` emission + `<FileRoutes>` | `@solidjs/router/fs` |
+| Scanning, filename convention, neutral route manifest | `filesystem-routes` |
+| Nesting + `(group)` stripping | `filesystem-routes/tree` |
+| Vite delivery (virtual module, HMR, code splitting, build inputs) | `filesystem-routes/vite` |
+| `RouteDefinition` emission | `@solidjs/router/fs` |
 | Request handling for `GET`/`POST` routes, middleware | `@solidjs/start` |
 
 Nothing here is Solid-specific: the core is bundler-agnostic — it never imports
@@ -25,7 +25,7 @@ from whatever id you pass as `fileRoutes({ moduleId })`.
 
 ```ts
 // vite.config.ts
-import { fileRoutes } from "vite-file-routes/vite";
+import { fileRoutes } from "filesystem-routes/vite";
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
@@ -38,15 +38,18 @@ export default defineConfig({
 
 ```tsx
 // src/app.tsx
-import { Router } from "@solidjs/router";
-import { FileRoutes } from "@solidjs/router/fs";
+import { pageRoutes } from "virtual:file-routes";
+import { createRouter } from "@solidjs/router";
+import { fileRoutes } from "@solidjs/router/fs";
 
-export const App = () => (
-  <Router root={props => <>{props.children}</>}>
-    <FileRoutes />
-  </Router>
-);
+const Router = createRouter({ routes: fileRoutes(pageRoutes) });
+
+export const App = () => <Router>{props => <>{props.children}</>}</Router>;
 ```
+
+The emission adapter never imports the virtual module itself — the app does,
+so the adapter resolves without the plugin, custom `moduleId`s work, and
+nothing needs excluding from dependency prebundling.
 
 Route modules live in `src/routes` (configurable via `fileRoutes({ dir })`).
 A module is a page when it has a default export, and may export a `route`
@@ -65,7 +68,16 @@ export default function Post() {
 }
 ```
 
-## Filename convention
+## Filename conventions
+
+Two conventions ship in the box. Both produce the same neutral manifest and
+share the same module convention (default export is a page, `route` config
+export, `httpMethods` handlers), so they are equally capable — only the
+filenames differ.
+
+### Nested (`PageFileSystemRouter`, the default)
+
+The convention proven by SolidStart:
 
 | File | Path |
 | --- | --- |
@@ -79,21 +91,134 @@ export default function Post() {
 Nested layouts come from pairing a file with a directory: `blog.tsx` is the
 layout for everything in `blog/`.
 
-The convention is pluggable — pass `toPath`/`toRoute` to a router, or a whole
-custom router to the Vite plugin:
+### Flat (`FlatFileSystemRouter`)
+
+The convention proven by Remix v2 and carried forward by React Router's
+`@react-router/fs-routes` — `.` delimiters instead of directories:
+
+| File | Path |
+| --- | --- |
+| `_index.tsx` | `/` |
+| `about.tsx` | `/about` |
+| `concerts.trending.tsx` | `/concerts/trending` |
+| `concerts.$city.tsx` | `/concerts/:city` |
+| `concerts.($page).tsx` | `/concerts/:page?` |
+| `files.$.tsx` | `/files/*splat` |
+| `_auth.login.tsx` | `/login`, nested in the `_auth.tsx` pathless layout |
+| `concerts_.mine.tsx` | `/concerts/mine`, escaping the `concerts.tsx` layout |
+| `[sitemap.xml].tsx` | `/sitemap.xml` — brackets escape special characters |
+
+`concerts.tsx` is the layout for every `concerts.*` file; a top-level folder
+routes through its `route.tsx` module and co-locates everything else in the
+folder without routing it. Pass the router to the plugin:
 
 ```ts
-import { PageFileSystemRouter } from "vite-file-routes";
-import { fileRoutes } from "vite-file-routes/vite";
+import { FlatFileSystemRouter } from "filesystem-routes";
+import { fileRoutes } from "filesystem-routes/vite";
+import { resolve } from "node:path";
 
 fileRoutes({
-  router: new PageFileSystemRouter({
-    dir: "/absolute/path/to/routes",
-    extensions: ["tsx"],
-    toPath: routeFile => (routeFile.endsWith(".page") ? routeFile.slice(0, -5) : undefined)
+  router: new FlatFileSystemRouter({
+    dir: resolve("src/routes"),
+    extensions: ["js", "jsx", "ts", "tsx"]
   })
 });
 ```
+
+Two departures from Remix: the catch-all param is named (`params.splat`
+rather than `params["*"]`), and optional *static* segments (`(en).about.tsx`)
+are rejected — the neutral pattern language has no representation for them.
+
+## API routes
+
+Route modules can answer requests as well as render. Turn on `httpMethods`
+(off by default — a client-only manifest has no use for handlers) and
+uppercase exports become request handlers:
+
+```ts
+// src/routes/api/posts/[id].ts
+export function GET(event) {
+  return Response.json(loadPost(event.params.id));
+}
+
+export function DELETE(event) {
+  deletePost(event.params.id);
+  return new Response(null, { status: 204 });
+}
+```
+
+The scanner turns each handler export into a lazy ref on the entry —
+`$GET: { src, pick: ["GET"] }`, `$DELETE: …` — with the same code splitting
+pages get:
+
+- A module with handlers but no default export routes without being a page:
+  `{ path: "/api/posts/:id", page: false, $GET, $DELETE }`.
+- A module can be both. A page with a `GET` export gets `$component` *and*
+  `$GET`, and handler exports are excluded from the component ref's picks, so
+  handler code never reaches the client bundle.
+- A lone `GET` also answers `HEAD`: a `$HEAD` ref aliasing the `GET` export
+  is added unless the module exports its own.
+- The recognized set is `HEAD`/`GET`/`POST`/`PUT`/`DELETE`/`PATCH`/`OPTIONS`;
+  pass an array instead of `true` to change it.
+
+This package stops at the manifest: it discovers handlers, it does not serve
+them. Dispatch is a few lines in whatever server consumes the manifest —
+match the URL, import the ref, call the export:
+
+```ts
+// any SSR handler or middleware
+import routes from "virtual:file-routes";
+
+async function handleApi(request: Request, entry, params) {
+  const ref = entry[`$${request.method}`];
+  if (!ref) return new Response(null, { status: 405 });
+  const handlers = await ref.import();
+  // a HEAD alias imports the GET handler
+  return (handlers[request.method] ?? handlers.GET)({ request, params });
+}
+```
+
+The handler's argument is whatever your server passes — the convention only
+dictates the export names. Frameworks typically enable `httpMethods` on the
+server environment's router only (SolidStart pairs it with `components:
+false` in SPA mode, so the server manifest routes requests without shipping
+page modules) — see the per-environment `routers` option below.
+
+## Custom conventions
+
+Conventions plug in at two independent seams, so a custom scheme picks the
+level it needs:
+
+- **`toPath`** — the filename convention: maps a route file (relative to
+  `dir`, extension stripped, e.g. `/blog/[id]`) to a route path in the
+  neutral pattern language (`:param`, `:param?`, `*rest`, `(group)`), or
+  `undefined` to skip the file. Layout nesting is encoded in the paths
+  themselves: `buildRouteTree` nests entries by path prefix (a layout at
+  `/blog` wraps a page at `/blog/`), and `(group)` segments nest without
+  contributing URL — which is also how pathless layouts and layout escapes
+  are expressed.
+- **`toRoute`** — the module convention: maps a source file to a manifest
+  entry, deciding what makes a file a route and which refs it carries. The
+  built-in one analyzes exports (default export, `route` config, HTTP
+  handlers); a custom one can key off anything.
+
+Pass either as config for one-off tweaks:
+
+```ts
+import { PageFileSystemRouter } from "filesystem-routes";
+import { fileRoutes } from "filesystem-routes/vite";
+
+fileRoutes({
+  toPath: routeFile => (routeFile.endsWith(".page") ? routeFile.slice(0, -5) : undefined)
+});
+```
+
+Or subclass for a full scheme — `FlatFileSystemRouter` is the model: it
+extends `PageFileSystemRouter`, overrides only `toPath`, and everything else
+(scanning, watching, module analysis, the tree, type generation) is
+inherited. A convention that also changes what a route module *is* overrides
+`toRoute`; a convention that changes what gets scanned overrides `glob()` on
+`BaseFileSystemRouter`.
 
 ## The manifest seam
 
@@ -119,12 +244,15 @@ import routes, { pageRoutes } from "virtual:file-routes";
 
 `routes` is the flat manifest; `pageRoutes` is the page entries nested by path
 with `(group)` segments stripped, so emission adapters don't each reimplement
-the tree (`buildRouteTree` from `vite-file-routes/tree` is the same
-function, for consumers holding only a flat manifest). Emission adapters
-import the module and emit their router's shape — see `@solidjs/router/fs` for
-Solid Router's, a ~70 line adapter other routers can mirror.
+the tree (`buildRouteTree` from `filesystem-routes/tree` is the same
+function, for consumers holding only a flat manifest). An emission adapter is
+a function taking manifest entries and returning the router's shape — see
+`fileRoutes` in `@solidjs/router/fs` for Solid Router's, a ~30 line adapter
+other routers can mirror. Adapters take the manifest as an argument rather
+than importing the virtual module, so they work standalone and with custom
+module ids.
 
-Add `/// <reference types="vite-file-routes/types" />` to type the import.
+Add `/// <reference types="filesystem-routes/types" />` to type the import.
 
 ### Keeping path-derived types alive
 
@@ -138,7 +266,7 @@ literal tuple, regenerating it as routes come and go:
 fileRoutes({ types: "file-routes.d.ts" })
 ```
 
-Reference the generated file instead of `vite-file-routes/types` — it is
+Reference the generated file instead of `filesystem-routes/types` — it is
 self-contained, and two declarations of the same module conflict. Emission
 adapters then have to preserve the tuple on the way through, which means a
 mapping typed over its input rather than a plain `.map`:
@@ -172,5 +300,18 @@ fileRoutes({
 | `components` | set `false` to route without emitting `$component` refs, keeping page modules out of that environment's bundle |
 | `buildInputs` | environments whose build takes every code-split route module as an entry |
 | `moduleId` | the id the manifest is served from |
-| `optimizeDepsExclude` | packages importing the virtual module, kept out of dep prebundling (defaults to `@solidjs/router/fs`) |
+| `optimizeDepsExclude` | escape hatch for packages that import the virtual module, kept out of dep prebundling (defaults to `[]`) |
 | `types` | write a declaration typing the manifest as a literal tuple, kept in step with the route directory |
+
+## Credits
+
+The design comes from [Vinxi](https://github.com/nksaraf/vinxi)'s file-system
+router by Nikhil Saraf, which powered SolidStart through 1.x: the
+`BaseFileSystemRouter` with pluggable `toPath`/`toRoute`, and above all the
+insight that the manifest should carry inert module refs — `$`-prefixed keys
+becoming dynamic imports, `$$`-prefixed keys becoming static ones — so any
+router and any bundler can meet at the same seam. This package extracts that
+approach into a standalone library, adding the nested tree view, the flat
+convention, and literal-tuple type generation. The filename conventions are
+the ones proven by [SolidStart](https://github.com/solidjs/solid-start) and
+[Remix](https://remix.run) v2.

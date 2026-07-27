@@ -8,9 +8,7 @@ import { fileRoutes, moduleId } from "../src/vite/index.ts";
 const temporaryDirectories: string[] = [];
 
 function createRouteTree(files: Record<string, string>) {
-  const directory = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "solid-file-routes-vite-"))
-  );
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "file-routes-vite-")));
   temporaryDirectories.push(directory);
   for (const [file, source] of Object.entries(files)) {
     const filename = path.join(directory, "src", "routes", file);
@@ -91,12 +89,13 @@ describe("fileRoutes vite plugin", () => {
     expect(plugin.resolveId(moduleId)).toBeUndefined();
   });
 
-  it("lets consumers replace the prebundling exclusion", () => {
+  it("excludes packages importing the virtual module from prebundling on request", () => {
+    // adapters take the manifest as an argument, so nothing is excluded by default
     const [defaults] = fileRoutes() as any[];
-    expect(defaults.config().optimizeDeps.exclude).toEqual(["@solidjs/router/fs"]);
+    expect(defaults.config()).toBeUndefined();
 
-    const [custom] = fileRoutes({ optimizeDepsExclude: [] }) as any[];
-    expect(custom.config().optimizeDeps.exclude).toEqual([]);
+    const [custom] = fileRoutes({ optimizeDepsExclude: ["some-adapter"] }) as any[];
+    expect(custom.config().optimizeDeps.exclude).toEqual(["some-adapter"]);
   });
 
   describe("types", () => {
@@ -149,7 +148,9 @@ describe("fileRoutes vite plugin", () => {
       const declaration = fs.readFileSync(path.join(root, "generated.d.ts"), "utf-8");
 
       expect(declaration).toMatch(/path: "\/post";[\s\S]*?\$component: FileRouteLazyRef;/);
-      expect(declaration).toMatch(/\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/index"\)>/);
+      expect(declaration).toMatch(
+        /\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/index"\)>/
+      );
     });
 
     it("rewrites the declaration only when the routes change", async () => {

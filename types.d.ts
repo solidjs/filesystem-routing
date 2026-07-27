@@ -4,7 +4,7 @@
  * this file once:
  *
  * ```ts
- * /// <reference types="vite-file-routes/types" />
+ * /// <reference types="filesystem-routes/types" />
  * ```
  *
  * These describe the manifest *as delivered*: the module refs the scanner

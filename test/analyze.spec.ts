@@ -9,7 +9,7 @@ import { PageFileSystemRouter } from "../src/convention.ts";
 const temporaryDirectories: string[] = [];
 
 function writeRoute(source: string) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solid-file-routes-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "file-routes-"));
   const filename = path.join(directory, "route.tsx");
   temporaryDirectories.push(directory);
   fs.writeFileSync(filename, source);

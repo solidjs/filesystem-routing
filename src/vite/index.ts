@@ -15,8 +15,10 @@ export { DEFAULT_EXTENSIONS, moduleId };
 export { treeShake } from "./tree-shake.ts";
 export { fileSystemWatcher } from "./fs-watcher.ts";
 
-export interface FileRoutesOptions
-  extends Pick<PageFileSystemRouterConfig, "components" | "httpMethods" | "toPath" | "toRoute"> {
+export interface FileRoutesOptions extends Pick<
+  PageFileSystemRouterConfig,
+  "components" | "httpMethods" | "toPath" | "toRoute"
+> {
   /** Route directory, relative to the Vite root. Defaults to `src/routes`. */
   dir?: string;
   /** File extensions that participate in routing. Defaults to js/jsx/ts/tsx. */
@@ -45,9 +47,11 @@ export interface FileRoutesOptions
   buildInputs?: string | string[];
   /**
    * Packages that import the virtual module and must therefore stay out of
-   * esbuild's dependency prebundling, which cannot resolve it. Defaults to
-   * `@solidjs/router/fs`, the emission adapter shipped alongside this
-   * package; pass your own list (or `[]`) for other routers.
+   * esbuild's dependency prebundling, which cannot resolve it. Emission
+   * adapters are expected to take the manifest as an argument instead of
+   * importing the virtual module (so app source holds the only import, which
+   * prebundling never touches), making this an escape hatch for packages
+   * that import it anyway. Defaults to `[]`.
    */
   optimizeDepsExclude?: string[];
   /**
@@ -58,13 +62,13 @@ export interface FileRoutesOptions
    *
    * `true` writes `file-routes.d.ts` next to the Vite root; pass a path to
    * put it elsewhere. The generated file is self-contained — reference it
-   * *instead of* `vite-file-routes/types`, never both.
+   * *instead of* `filesystem-routes/types`, never both.
    */
   types?: boolean | string;
 }
 
 /**
- * The Vite delivery adapter for `vite-file-routes`.
+ * The Vite delivery adapter for `filesystem-routes`.
  *
  * Serializes the neutral route manifest into the virtual module — module refs
  * become code-split dynamic imports (`$`-prefixed keys) or eagerly required
@@ -132,14 +136,15 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
 
   return [
     {
-      name: "file-routes",
+      name: "filesystem-routes",
       enforce: "pre",
       config() {
+        // Packages importing the virtual module (which only this plugin can
+        // resolve) must stay out of esbuild prebundling.
+        if (!options.optimizeDepsExclude?.length) return;
         return {
           optimizeDeps: {
-            // These import the virtual module, which only this plugin can
-            // resolve; keep them out of esbuild prebundling.
-            exclude: options.optimizeDepsExclude ?? ["@solidjs/router/fs"]
+            exclude: options.optimizeDepsExclude
           }
         };
       },

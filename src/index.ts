@@ -14,4 +14,5 @@ export {
   routePathFromFile,
   type PageFileSystemRouterConfig
 } from "./convention.ts";
+export { FlatFileSystemRouter, flatRoutePathFromFile } from "./flat.ts";
 export { buildRouteTree, stripRouteGroups, type RouteTreeEntry } from "./tree.ts";

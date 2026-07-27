@@ -33,9 +33,7 @@ describe("routePathFromFile", () => {
 const temporaryDirectories: string[] = [];
 
 function createRouteTree(files: Record<string, string>) {
-  const directory = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "solid-file-routes-tree-"))
-  );
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "file-routes-tree-")));
   temporaryDirectories.push(directory);
   for (const [file, source] of Object.entries(files)) {
     const filename = path.join(directory, file);

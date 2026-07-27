@@ -64,7 +64,7 @@ export const fileSystemWatcher = (
   onReload?: () => void | Promise<void>
 ): PluginOption => {
   const plugin: PluginOption = {
-    name: "file-routes:watcher",
+    name: "filesystem-routes:watcher",
     async configureServer(server: ViteDevServer) {
       const watched = new Set<BaseFileSystemRouter>();
       for (const environment of Object.keys(server.environments)) {

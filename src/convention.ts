@@ -33,15 +33,7 @@ export function routePathFromFile(routeFile: string): string {
  * per-router via `httpMethods`; frameworks that do not serve requests from
  * route modules (a client manifest, a static site) leave it off.
  */
-export const HTTP_METHODS = [
-  "HEAD",
-  "GET",
-  "POST",
-  "PUT",
-  "DELETE",
-  "PATCH",
-  "OPTIONS"
-] as const;
+export const HTTP_METHODS = ["HEAD", "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"] as const;
 
 export interface PageFileSystemRouterConfig extends FileSystemRouterConfig {
   /**
@@ -135,9 +127,7 @@ export class PageFileSystemRouter extends BaseFileSystemRouter {
             ? {
                 src: src,
                 pick: [
-                  ...localExportNames.filter(
-                    name => name !== "route" && !methods.includes(name)
-                  ),
+                  ...localExportNames.filter(name => name !== "route" && !methods.includes(name)),
                   "default",
                   "$css"
                 ]

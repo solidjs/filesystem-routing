@@ -1,8 +1,26 @@
 {
-  "name": "vite-file-routes",
+  "name": "filesystem-routes",
   "description": "Router-neutral file-system routing: scans a route directory into a neutral route manifest with pluggable conventions and delivery adapters",
   "license": "MIT",
   "version": "0.1.0",
+  "author": "Ryan Carniato",
+  "homepage": "https://github.com/solidjs/filesystem-routes#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solidjs/filesystem-routes"
+  },
+  "bugs": {
+    "url": "https://github.com/solidjs/filesystem-routes/issues"
+  },
+  "keywords": [
+    "file-system routing",
+    "file routes",
+    "router",
+    "vite",
+    "vite-plugin",
+    "solid"
+  ],
+  "sideEffects": false,
   "publishConfig": {
     "access": "public"
   },
@@ -36,7 +54,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pretty": "prettier --write \"{src,test}/**/*.ts\"",
-    "typecheck:dist": "pnpx @arethetypeswrong/cli --pack . --profile esm-only"
+    "typecheck:dist": "pnpx @arethetypeswrong/cli --pack . --profile esm-only",
+    "release": "pnpm build && changeset publish"
   },
   "dependencies": {
     "@babel/core": "^7.29.0",
@@ -56,6 +75,7 @@
     }
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@types/node": "^22.10.0",
     "prettier": "^3.4.1",
     "typescript": "^5.7.2",
