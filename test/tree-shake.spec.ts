@@ -1,13 +1,47 @@
 import { describe, expect, it } from "vitest";
 
-import { treeShake } from "../src/vite/tree-shake.ts";
+import { sanitizeChunkFileName, toPickId, treeShake } from "../src/vite/tree-shake.ts";
 
 async function shake(code: string, pick: string[]) {
   const plugin = treeShake() as any;
-  const id = `/routes/route.ts?${pick.map(p => `pick=${p}`).join("&")}`;
+  const id = toPickId("/routes/route.ts", pick);
   const result = await plugin.transform(code, id);
   return result?.code as string | undefined;
 }
+
+// https://github.com/solidjs/solid-start/issues/1918
+describe("toPickId", () => {
+  it("ends the id with the source extension so extension filters still match", () => {
+    const id = toPickId("/routes/route.ts", ["GET"]);
+
+    expect(id).toBe("/routes/route.ts?pick=GET&lang.ts");
+    // the default filter used by unplugin-macros and many other plugins
+    expect(id).toMatch(/\.[cm]?[jt]sx?$/);
+  });
+
+  it("keeps every picked export in the query", () => {
+    expect(toPickId("/routes/route.tsx", ["default", "$css"])).toBe(
+      "/routes/route.tsx?pick=default&pick=$css&lang.tsx"
+    );
+  });
+
+  it("leaves non-script sources alone", () => {
+    expect(toPickId("/routes/route.mdx", ["default"])).toBe("/routes/route.mdx?pick=default");
+  });
+});
+
+describe("sanitizeChunkFileName", () => {
+  it("drops the pick query so route chunks keep their file-based name", () => {
+    expect(sanitizeChunkFileName("index.tsx?pick=default&pick=$css&lang")).toBe("index");
+    expect(sanitizeChunkFileName("macro.ts?pick=GET&lang")).toBe("macro");
+  });
+
+  it("still sanitizes the rest of the name like the bundler does", () => {
+    expect(sanitizeChunkFileName("[...404].tsx?pick=default&pick=$css&lang")).toBe("_...404_");
+    expect(sanitizeChunkFileName("entry-client")).toBe("entry-client");
+    expect(sanitizeChunkFileName("_libs/solid-js")).toBe("_libs/solid-js");
+  });
+});
 
 describe("treeShake", () => {
   it("keeps only the picked export", async () => {
@@ -284,6 +318,21 @@ describe("treeShake", () => {
     const output = await shake(code, ["GET"]);
 
     expect(output).not.toContain("initializeSecret");
+    expect(output).toContain("export const GET");
+  });
+
+  // https://github.com/solidjs/solid-start/pull/2238
+  it("keeps exports inside a TS namespace that a picked export references", async () => {
+    const code = `
+      namespace Data {
+        export const value = "ok";
+      }
+      export const GET = () => Data.value;
+    `;
+
+    const output = await shake(code, ["GET"]);
+
+    expect(output).toContain("export const value");
     expect(output).toContain("export const GET");
   });
 });
