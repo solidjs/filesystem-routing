@@ -8,11 +8,11 @@ import { BaseFileSystemRouter, normalizePath } from "../router.ts";
 import { buildRouteTree, type RouteTreeEntry } from "../tree.ts";
 import { DEFAULT_EXTENSIONS, moduleId } from "./constants.ts";
 import { fileSystemWatcher } from "./fs-watcher.ts";
-import { treeShake } from "./tree-shake.ts";
+import { sanitizeChunkFileName, toPickId, treeShake } from "./tree-shake.ts";
 import { serializeTypes } from "./types.ts";
 
 export { DEFAULT_EXTENSIONS, moduleId };
-export { treeShake } from "./tree-shake.ts";
+export { sanitizeChunkFileName, toPickId, treeShake } from "./tree-shake.ts";
 export { fileSystemWatcher } from "./fs-watcher.ts";
 
 export interface FileRoutesOptions extends Pick<
@@ -131,21 +131,28 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
   }
 
   /** The id a route module ref is loaded from: its source plus its picks. */
-  const toModuleId = (ref: ModuleRef) =>
-    `${ref.src}?${ref.pick.map(pick => `pick=${pick}`).join("&")}`;
+  const toModuleId = (ref: ModuleRef) => toPickId(ref.src, ref.pick);
 
   return [
     {
       name: "filesystem-routing",
       enforce: "pre",
       config() {
-        // Packages importing the virtual module (which only this plugin can
-        // resolve) must stay out of esbuild prebundling.
-        if (!options.optimizeDepsExclude?.length) return;
         return {
-          optimizeDeps: {
-            exclude: options.optimizeDepsExclude
-          }
+          build: {
+            rollupOptions: {
+              output: {
+                // Keeps route chunks named after their file rather than after
+                // the `?pick=...` id that addresses them. See toPickId.
+                sanitizeFileName: sanitizeChunkFileName
+              }
+            }
+          },
+          // Packages importing the virtual module (which only this plugin can
+          // resolve) must stay out of esbuild prebundling.
+          ...(options.optimizeDepsExclude?.length
+            ? { optimizeDeps: { exclude: options.optimizeDepsExclude } }
+            : {})
         };
       },
       configResolved(config) {

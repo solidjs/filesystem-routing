@@ -49,10 +49,13 @@ describe("fileRoutes vite plugin", () => {
     const code = await loadVirtualModule(root);
 
     expect(code).toContain("export default routes;");
-    // lazy refs become code-split dynamic imports picking component exports
-    expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css'\)/);
+    // lazy refs become code-split dynamic imports picking component exports;
+    // the id ends in a real extension so extension-filtered plugins match it
+    expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
     // eager refs become static imports of the route config
-    expect(code).toMatch(/import { route as routeData0 } from '[^']*\[id\]\.tsx\?pick=route';/);
+    expect(code).toMatch(
+      /import { route as routeData0 } from '[^']*\[id\]\.tsx\?pick=route&lang\.tsx';/
+    );
     expect(code).toContain(`"path":"/blog/:id"`);
     expect(code).toContain(`'route': routeData0`);
   });
@@ -73,7 +76,7 @@ describe("fileRoutes vite plugin", () => {
       /export const pageRoutes = \[\{ \.\.\.route\d, id: "\/\(app\)", path: "\/", children: \[\{ \.\.\.route\d, id: "\/dashboard", path: "\/dashboard" \}\] \}\]/
     );
     // entries are referenced, not copied, so refs are emitted exactly once
-    expect(code.match(/pick=default&pick=\$css'\)/g)?.length).toBe(2);
+    expect(code.match(/pick=default&pick=\$css&lang\.tsx'\)/g)?.length).toBe(2);
   });
 
   it("resolves only the virtual module id", async () => {
@@ -92,10 +95,17 @@ describe("fileRoutes vite plugin", () => {
   it("excludes packages importing the virtual module from prebundling on request", () => {
     // adapters take the manifest as an argument, so nothing is excluded by default
     const [defaults] = fileRoutes() as any[];
-    expect(defaults.config()).toBeUndefined();
+    expect(defaults.config().optimizeDeps).toBeUndefined();
 
     const [custom] = fileRoutes({ optimizeDepsExclude: ["some-adapter"] }) as any[];
     expect(custom.config().optimizeDeps.exclude).toEqual(["some-adapter"]);
+  });
+
+  it("names route chunks after their file, not their pick id", () => {
+    const [plugin] = fileRoutes() as any[];
+    const sanitize = plugin.config().build.rollupOptions.output.sanitizeFileName;
+
+    expect(sanitize("index.tsx?pick=default&pick=$css&lang")).toBe("index");
   });
 
   describe("types", () => {
@@ -192,8 +202,10 @@ describe("fileRoutes vite plugin", () => {
 
       expect(input).toHaveLength(2);
       expect(input.every(id => id.includes("?pick=default&pick=$css"))).toBe(true);
+      // ids end in a real extension so extension-filtered plugins match them
+      expect(input.every(id => id.endsWith("&lang.tsx"))).toBe(true);
       // `$$route` refs are inlined into the manifest, so they are not entries
-      expect(input.some(id => id.endsWith("?pick=route"))).toBe(false);
+      expect(input.some(id => id.includes("?pick=route"))).toBe(false);
     });
 
     it("only contributes inputs to the named environments, on build", async () => {
