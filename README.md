@@ -13,8 +13,8 @@ a delivery adapter that materializes the manifest into code.
 | Scanning, filename convention, neutral route manifest | `filesystem-routing` |
 | Nesting + `(group)` stripping | `filesystem-routing/tree` |
 | Vite delivery (virtual module, HMR, code splitting, build inputs) | `filesystem-routing/vite` |
-| `RouteDefinition` emission | `@solidjs/router/fs` |
-| Request handling for `GET`/`POST` routes, middleware | `@solidjs/start` |
+| `RouteDefinition` emission for Solid Router (code splitting, route CSS) | `filesystem-routing/solid-router` |
+| Request dispatch for `GET`/`POST` routes, as fetch middleware | `filesystem-routing/api` |
 
 Nothing here is Solid-specific: the core is bundler-agnostic — it never imports
 Vite — the Vite adapter is router-agnostic, and the conventions are the ones
@@ -39,17 +39,26 @@ export default defineConfig({
 ```tsx
 // src/app.tsx
 import { pageRoutes } from "virtual:file-routes";
+import clientAssets from "virtual:solid-manifest/client";
 import { createRouter } from "@solidjs/router";
-import { fileRoutes } from "@solidjs/router/fs";
+import { fileRoutes } from "filesystem-routing/solid-router";
 
-const Router = createRouter({ routes: fileRoutes(pageRoutes) });
+const Router = createRouter({ routes: fileRoutes(pageRoutes, { assets: clientAssets }) });
 
 export const App = () => <Router>{props => <>{props.children}</>}</Router>;
 ```
 
-The emission adapter never imports the virtual module itself — the app does,
+The emission adapter never imports a virtual module itself — the app does,
 so the adapter resolves without the plugin, custom `moduleId`s work, and
-nothing needs excluding from dependency prebundling.
+nothing needs excluding from dependency prebundling. The same goes for the
+client asset manifest behind the route-CSS lifecycle: `assets` takes a map
+keyed by module source path (or a resolver over one) — vite-plugin-solid
+apps pass `virtual:solid-manifest/client`, other toolchains pass their
+equivalent, and without it components render unwrapped (in dev the map is
+empty and Vite's own client manages CSS). With assets, each route's
+stylesheets are acquired on mount and released on route leave through the
+runtime's ref-counted `acquireAsset`, so styles from a left route are
+removed instead of accumulating.
 
 Route modules live in `src/routes` (configurable via `fileRoutes({ dir })`).
 A module is a page when it has a default export, and may export a `route`
@@ -161,25 +170,29 @@ pages get:
 - The recognized set is `HEAD`/`GET`/`POST`/`PUT`/`DELETE`/`PATCH`/`OPTIONS`;
   pass an array instead of `true` to change it.
 
-This package stops at the manifest: it discovers handlers, it does not serve
-them. Dispatch is a few lines in whatever server consumes the manifest —
-match the URL, import the ref, call the export:
+Dispatch ships as fetch-style middleware — `filesystem-routing/api` matches
+requests against the manifest's handler refs and composes into any
+`(request, next)` chain, an SSR handler's middleware option included:
 
 ```ts
-// any SSR handler or middleware
+// src/middleware.ts
 import routes from "virtual:file-routes";
+import { createAPIHandler } from "filesystem-routing/api";
 
-async function handleApi(request: Request, entry, params) {
-  const ref = entry[`$${request.method}`];
-  if (!ref) return new Response(null, { status: 405 });
-  const handlers = await ref.import();
-  // a HEAD alias imports the GET handler
-  return (handlers[request.method] ?? handlers.GET)({ request, params });
-}
+export default [createAPIHandler(routes)];
 ```
 
-The handler's argument is whatever your server passes — the convention only
-dictates the export names. Frameworks typically enable `httpMethods` on the
+Handlers receive the request event of the surrounding scope (the storage
+`provideRequestEvent` establishes — pass `getEvent` to dispatch outside
+one), with the matched `params` written onto it. Unmatched requests (no
+route, or no handler for the method) advance the chain; `HEAD` falls back
+to the `GET` handler; returned strings and JSON values are coerced into
+responses. A `GET` handler may decline by returning `undefined`: a module
+that is also a page falls through to the chain (its component renders
+instead), a handler-only module answers 404. `createAPIMatcher` exposes the
+matching alone for servers with their own dispatch shape.
+
+Frameworks typically enable `httpMethods` on the
 server environment's router only (SolidStart pairs it with `components:
 false` in SPA mode, so the server manifest routes requests without shipping
 page modules) — see the per-environment `routers` option below.
@@ -247,10 +260,10 @@ with `(group)` segments stripped, so emission adapters don't each reimplement
 the tree (`buildRouteTree` from `filesystem-routing/tree` is the same
 function, for consumers holding only a flat manifest). An emission adapter is
 a function taking manifest entries and returning the router's shape — see
-`fileRoutes` in `@solidjs/router/fs` for Solid Router's, a ~30 line adapter
-other routers can mirror. Adapters take the manifest as an argument rather
-than importing the virtual module, so they work standalone and with custom
-module ids.
+`fileRoutes` in `filesystem-routing/solid-router` for Solid Router's, an
+adapter other routers can mirror. Adapters take the manifest as an argument
+rather than importing the virtual module, so they work standalone and with
+custom module ids.
 
 Add `/// <reference types="filesystem-routing/types" />` to type the import.
 
