@@ -7,12 +7,14 @@ import { PageFileSystemRouter } from "../src/convention.ts";
 import type { ModuleRef, RouteManifestEntry } from "../src/manifest.ts";
 import { buildRouteTree } from "../src/tree.ts";
 import { createAPIHandler, type APIEvent } from "../src/api.ts";
-import { fileRoutes } from "../src/solid-router.ts";
 
-// Both adapters against a real scan: route modules on disk, the shipping
-// convention over them, refs materialized the way the Vite delivery adapter
-// materializes them (`$` → dynamic import, `$$` → eager require) — the
-// virtual-module serialization itself is pinned by vite.spec.ts.
+// The tree view and the API adapter against a real scan: route modules on
+// disk, the shipping convention over them, refs materialized the way the
+// Vite delivery adapter materializes them (`$` → dynamic import, `$$` →
+// eager require) — the virtual-module serialization itself is pinned by
+// vite.spec.ts. Route emission is each router's own (`@solidjs/router/fs`
+// for Solid Router), so what is pinned here is the seam it consumes: the
+// nested view's paths and the delivered refs.
 
 const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "file-routes-adapters-")));
 
@@ -75,23 +77,24 @@ async function scan() {
 }
 
 describe("adapters over a real scan", () => {
-  it("emits the nested route tree with groups stripped and configs merged", async () => {
+  it("nests the route tree with groups stripped and refs delivered", async () => {
     const delivered = await scan();
     const tree = buildRouteTree(delivered.filter(entry => entry.page));
-    const routes = fileRoutes(tree);
 
-    const paths = routes.map(route => route.path).sort();
+    const paths = tree.map(entry => entry.path).sort();
     expect(paths).toEqual(["/", "/", "/about"]);
 
     // the group layout nests its child at the stripped path
-    const layout = routes.find(route => route.id === "/(admin)")!;
+    const layout = tree.find(entry => entry.id === "/(admin)")!;
     expect(layout.path).toBe("/");
     expect(layout.children!.map(child => child.path)).toEqual(["/stats"]);
-    // the eager `route` config merged in, info tagged with its origin
-    expect(layout.children![0]!.info).toEqual({ tag: "stats", filesystem: true });
-    // components are code-split lazy refs with preload
-    expect(typeof layout.children![0]!.component).toBe("function");
-    expect(typeof (layout.children![0]!.component as any).preload).toBe("function");
+
+    // the eager `route` config ref delivers the module's config export
+    const stats = layout.children![0]! as any;
+    expect(stats.$$route.require().route).toEqual({ info: { tag: "stats" } });
+    // the component ref stays a code-split dynamic import for emission adapters
+    expect(stats.$component.src).toContain("stats.mjs");
+    await expect(stats.$component.import()).resolves.toHaveProperty("default");
   });
 
   it("dispatches API routes from the same manifest", async () => {

@@ -13,8 +13,8 @@ a delivery adapter that materializes the manifest into code.
 | Scanning, filename convention, neutral route manifest | `filesystem-routing` |
 | Nesting + `(group)` stripping | `filesystem-routing/tree` |
 | Vite delivery (virtual module, HMR, code splitting, build inputs) | `filesystem-routing/vite` |
-| `RouteDefinition` emission for Solid Router (code splitting, route CSS) | `filesystem-routing/solid-router` |
 | Request dispatch for `GET`/`POST` routes, as fetch middleware | `filesystem-routing/api` |
+| `RouteDefinition` emission for Solid Router (code splitting, typed paths) | `@solidjs/router/fs` |
 
 Nothing here is Solid-specific: the core is bundler-agnostic — it never imports
 Vite — the Vite adapter is router-agnostic, and the conventions are the ones
@@ -39,26 +39,19 @@ export default defineConfig({
 ```tsx
 // src/app.tsx
 import { pageRoutes } from "virtual:file-routes";
-import clientAssets from "virtual:solid-manifest/client";
 import { createRouter } from "@solidjs/router";
-import { fileRoutes } from "filesystem-routing/solid-router";
+import { fileRoutes } from "@solidjs/router/fs";
 
-const Router = createRouter({ routes: fileRoutes(pageRoutes, { assets: clientAssets }) });
+const Router = createRouter({ routes: fileRoutes(pageRoutes) });
 
 export const App = () => <Router>{props => <>{props.children}</>}</Router>;
 ```
 
-The emission adapter never imports a virtual module itself — the app does,
-so the adapter resolves without the plugin, custom `moduleId`s work, and
-nothing needs excluding from dependency prebundling. The same goes for the
-client asset manifest behind the route-CSS lifecycle: `assets` takes a map
-keyed by module source path (or a resolver over one) — vite-plugin-solid
-apps pass `virtual:solid-manifest/client`, other toolchains pass their
-equivalent, and without it components render unwrapped (in dev the map is
-empty and Vite's own client manages CSS). With assets, each route's
-stylesheets are acquired on mount and released on route leave through the
-runtime's ref-counted `acquireAsset`, so styles from a left route are
-removed instead of accumulating.
+The emission adapter ships with the router — `@solidjs/router/fs` for Solid
+Router; other routers mirror the same shape in their own packages. It never
+imports a virtual module itself — the app does, so the adapter resolves
+without the plugin, custom `moduleId`s work, and nothing needs excluding
+from dependency prebundling.
 
 Route modules live in `src/routes` (configurable via `fileRoutes({ dir })`).
 A module is a page when it has a default export, and may export a `route`
@@ -260,7 +253,7 @@ with `(group)` segments stripped, so emission adapters don't each reimplement
 the tree (`buildRouteTree` from `filesystem-routing/tree` is the same
 function, for consumers holding only a flat manifest). An emission adapter is
 a function taking manifest entries and returning the router's shape — see
-`fileRoutes` in `filesystem-routing/solid-router` for Solid Router's, an
+`fileRoutes` in `@solidjs/router/fs` for Solid Router's, an
 adapter other routers can mirror. Adapters take the manifest as an argument
 rather than importing the virtual module, so they work standalone and with
 custom module ids.

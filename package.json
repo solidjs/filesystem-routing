@@ -41,10 +41,6 @@
       "types": "./dist/vite/index.d.ts",
       "default": "./dist/vite/index.js"
     },
-    "./solid-router": {
-      "types": "./dist/solid-router.d.ts",
-      "default": "./dist/solid-router.js"
-    },
     "./api": {
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"
@@ -77,27 +73,17 @@
     "radix3": "^1.1.2"
   },
   "peerDependencies": {
-    "@solidjs/web": ">=2.0.0-beta.31",
-    "solid-js": ">=2.0.0-beta.31",
     "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
   },
   "peerDependenciesMeta": {
-    "@solidjs/web": {
-      "optional": true
-    },
-    "solid-js": {
-      "optional": true
-    },
     "vite": {
       "optional": true
     }
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@solidjs/web": "2.0.0-beta.31",
     "@types/node": "^22.10.0",
     "prettier": "^3.4.1",
-    "solid-js": "2.0.0-beta.31",
     "typescript": "^5.7.2",
     "vite": "^6.0.0",
     "vitest": "^2.1.6"
