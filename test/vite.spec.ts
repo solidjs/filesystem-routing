@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { PageFileSystemRouter } from "../src/convention.ts";
 import { fileRoutes, moduleId } from "../src/vite/index.ts";
 
 const temporaryDirectories: string[] = [];
@@ -30,10 +31,15 @@ function createPlugin(root: string, options: Parameters<typeof fileRoutes>[0] = 
   return plugin;
 }
 
-function loadVirtualModule(root: string, environment = "client") {
-  const plugin = createPlugin(root);
-  const context = { environment: { config: { root }, mode: "dev", name: environment } };
+function loadWith(plugin: any, root: string, environment = "client", consumer?: string) {
+  const context = {
+    environment: { config: { root, consumer }, mode: "dev", name: environment }
+  };
   return plugin.load.call(context, moduleId);
+}
+
+function loadVirtualModule(root: string, environment = "client") {
+  return loadWith(createPlugin(root), root, environment);
 }
 
 describe("fileRoutes vite plugin", () => {
@@ -181,6 +187,95 @@ describe("fileRoutes vite plugin", () => {
       await plugin.buildStart.call({});
 
       expect(fs.existsSync(path.join(root, "file-routes.d.ts"))).toBe(false);
+    });
+  });
+
+  describe("handler refs per environment", () => {
+    // One shared router with httpMethods on — the fullstack SSR shape:
+    // an API-only module, and a page that also exports a handler.
+    const root = () =>
+      createRouteTree({
+        "index.tsx": "export default () => <h1>Home</h1>;",
+        "users.tsx": `
+          export const GET = () => new Response("users");
+          export default () => <h1>Users</h1>;
+        `,
+        "api/users.ts": "export const POST = () => new Response('created');"
+      });
+
+    it("serves handler refs to server-consumer environments", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { httpMethods: true });
+
+      const code = await loadWith(plugin, directory, "ssr");
+
+      expect(code).toContain('"$POST"');
+      expect(code).toMatch(/import\('[^']*api\/users\.ts\?pick=POST&lang\.ts'\)/);
+      // a lone GET answers HEAD too
+      expect(code).toContain('"$HEAD"');
+    });
+
+    it("strips handler refs from client-consumer manifests", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { httpMethods: true });
+
+      const code = await loadWith(plugin, directory, "client");
+
+      // no handler refs, and the handler-only API entry is gone entirely —
+      // neither its module nor its path reaches the client bundle
+      expect(code).not.toContain("$GET");
+      expect(code).not.toContain("$POST");
+      expect(code).not.toContain("api/users.ts");
+      // the page half of a page+handler module stays routable
+      expect(code).toMatch(/import\('[^']*users\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
+      expect(code).toContain('"path":"/users"');
+    });
+
+    it("splits by consumer, not by name, when the environment declares one", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { httpMethods: true });
+
+      // an SSR environment under a custom name (workerd, nitro, ...)
+      const custom = await loadWith(plugin, directory, "workerd", "server");
+      expect(custom).toContain('"$POST"');
+
+      // and a client consumer under a custom name still gets the strip
+      const preview = await loadWith(plugin, directory, "browser-preview", "client");
+      expect(preview).not.toContain("$POST");
+    });
+
+    it("serves an explicit per-environment router untouched", async () => {
+      const directory = root();
+      const routerDir = path.join(directory, "src", "routes");
+      const explicit = new PageFileSystemRouter({
+        dir: routerDir.replaceAll("\\", "/"),
+        extensions: ["ts", "tsx"],
+        httpMethods: true
+      });
+      const [plugin] = fileRoutes({ routers: { client: explicit } }) as any[];
+      plugin.configResolved({ root: directory });
+
+      // the app asked for handlers in its client manifest by name — explicit
+      // per-environment routers are the escape hatch, not a leak
+      const code = await loadWith(plugin, directory, "client");
+      expect(code).toContain('"$POST"');
+    });
+
+    it("keeps handler modules out of client build inputs", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, {
+        httpMethods: true,
+        buildInputs: ["client", "ssr"]
+      });
+
+      const client = await plugin.configEnvironment("client", {}, { command: "build" });
+      const clientInput: string[] = client.build.rollupOptions.input;
+      expect(clientInput.some(id => id.includes("pick=POST"))).toBe(false);
+      expect(clientInput.some(id => id.includes("pick=default"))).toBe(true);
+
+      const ssr = await plugin.configEnvironment("ssr", {}, { command: "build" });
+      const ssrInput: string[] = ssr.build.rollupOptions.input;
+      expect(ssrInput.some(id => id.includes("pick=POST"))).toBe(true);
     });
   });
 

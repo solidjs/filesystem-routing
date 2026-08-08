@@ -3,7 +3,7 @@ import { dirname, relative, resolve } from "node:path";
 import type { PluginOption } from "vite";
 
 import { PageFileSystemRouter, type PageFileSystemRouterConfig } from "../convention.ts";
-import type { ModuleRef } from "../manifest.ts";
+import type { ModuleRef, RouteManifestEntry } from "../manifest.ts";
 import { BaseFileSystemRouter, normalizePath } from "../router.ts";
 import { buildRouteTree, type RouteTreeEntry } from "../tree.ts";
 import { DEFAULT_EXTENSIONS, moduleId } from "./constants.ts";
@@ -68,6 +68,44 @@ export interface FileRoutesOptions extends Pick<
 }
 
 /**
+ * Handler refs are the `$`-prefixed all-uppercase keys the convention emits
+ * (`$GET`, `$POST`, ...). They exist for server dispatch only.
+ */
+const HANDLER_REF = /^\$[A-Z]+$/;
+
+/**
+ * Whether a Vite environment runs on the server. `configEnvironment` sees
+ * `consumer` only when something set it explicitly, so fall back to Vite's
+ * own default: the `client` environment is the one client consumer.
+ */
+const isServerConsumer = (name: string, consumer: string | undefined) =>
+  (consumer ?? (name === "client" ? "client" : "server")) === "server";
+
+/**
+ * The client's view of a shared server manifest: handler refs removed. A
+ * client bundle can never invoke a request handler, but serializing its ref
+ * would pull the handler module — and the server-only code it imports —
+ * into the client build. Handler-only entries (API routes) disappear
+ * entirely; pages that also export handlers keep their page refs.
+ */
+function stripHandlerRefs(routes: RouteManifestEntry[]): RouteManifestEntry[] {
+  const stripped: RouteManifestEntry[] = [];
+  for (const route of routes) {
+    const handlerKeys = Object.keys(route).filter(key => HANDLER_REF.test(key));
+    if (!handlerKeys.length) {
+      stripped.push(route);
+      continue;
+    }
+    const rest: RouteManifestEntry = { ...route };
+    for (const key of handlerKeys) delete rest[key];
+    if (rest.page || Object.keys(rest).some(key => key.startsWith("$"))) {
+      stripped.push(rest);
+    }
+  }
+  return stripped;
+}
+
+/**
  * The Vite delivery adapter for `filesystem-routing`.
  *
  * Serializes the neutral route manifest into the virtual module — module refs
@@ -79,6 +117,12 @@ export interface FileRoutesOptions extends Pick<
  * flat manifest, and `pageRoutes` is the page entries nested by path with
  * `(group)` segments stripped, so emission adapters don't each reimplement
  * the tree.
+ *
+ * With `httpMethods` on, one router serves both sides of an SSR app: the
+ * handler refs it emits reach server-consumer environments only, and client
+ * manifests drop them (and handler-only API entries with them) so handler
+ * modules never enter a client build. An environment given its own router
+ * via `routers` is explicit and serves that router's manifest untouched.
  */
 export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
   const virtualId = options.moduleId ?? moduleId;
@@ -177,11 +221,19 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         const router = getRouter(name);
         if (!router) return;
 
+        // A client environment on the shared router never serializes
+        // handler refs (see load), so their modules must not become its
+        // build entries either.
+        const routes =
+          options.routers?.[name] || isServerConsumer(name, (_config as any).consumer)
+            ? await router.getRoutes()
+            : stripHandlerRefs(await router.getRoutes());
+
         // Every code-split route module is an entry of its own, so the
         // manifest's dynamic imports resolve to real chunks. `$$` refs are
         // inlined into the manifest and need no entry.
         const input: string[] = [];
-        for (const route of await router.getRoutes()) {
+        for (const route of routes) {
           for (const [key, ref] of Object.entries(route)) {
             if (ref && key.startsWith("$") && !key.startsWith("$$")) {
               input.push(toModuleId(ref as ModuleRef));
@@ -202,8 +254,19 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         const isBuild = this.environment.mode === "build";
         const js = jsCode();
 
-        const router = getRouter(this.environment.name);
-        const routes = (router ? await router.getRoutes() : []) ?? [];
+        const environmentName = this.environment.name;
+        const router = getRouter(environmentName);
+        let routes = (router ? await router.getRoutes() : []) ?? [];
+        // The shared router serves every environment, so the split is this
+        // adapter's job: client consumers get the manifest without handler
+        // refs. An explicit per-environment router already IS the split —
+        // serve whatever it emits.
+        if (
+          !options.routers?.[environmentName] &&
+          !isServerConsumer(environmentName, this.environment.config.consumer)
+        ) {
+          routes = stripHandlerRefs(routes);
+        }
 
         const serializeEntry = (entry: unknown) =>
           JSON.stringify(entry, (key, value) => {
