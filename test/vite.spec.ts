@@ -226,6 +226,7 @@ describe("fileRoutes vite plugin", () => {
       expect(code).not.toContain("$GET");
       expect(code).not.toContain("$POST");
       expect(code).not.toContain("api/users.ts");
+      expect(code).not.toContain("/api/users");
       // the page half of a page+handler module stays routable
       expect(code).toMatch(/import\('[^']*users\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
       expect(code).toContain('"path":"/users"');

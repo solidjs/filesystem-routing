@@ -98,7 +98,10 @@ function stripHandlerRefs(routes: RouteManifestEntry[]): RouteManifestEntry[] {
     }
     const rest: RouteManifestEntry = { ...route };
     for (const key of handlerKeys) delete rest[key];
-    if (rest.page || Object.keys(rest).some(key => key.startsWith("$"))) {
+    // Entries carry `$component: undefined` placeholders; only a ref with a
+    // value keeps a handler-only entry alive. Otherwise not even the API
+    // path string reaches the client bundle.
+    if (rest.page || Object.keys(rest).some(key => key.startsWith("$") && rest[key] !== undefined)) {
       stripped.push(rest);
     }
   }
