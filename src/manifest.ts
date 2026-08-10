@@ -17,6 +17,11 @@
  * under decides how:
  * - keys prefixed `$` become lazy refs: `{ src, import: () => import(...) }`
  * - keys prefixed `$$` become eager refs: `{ require: () => ({ ...exports }) }`
+ *
+ * A delivery adapter configured without code splitting (the Vite adapter's
+ * `codeSplitting: false`) materializes `$` refs eagerly too, as
+ * `{ src, require }` — the delivered shape, not the key prefix, is the
+ * contract consumers branch on.
  */
 export interface ModuleRef {
   /** Absolute path of the source module. */

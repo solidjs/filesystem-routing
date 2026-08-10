@@ -241,8 +241,12 @@ The scanner produces flat `RouteManifestEntry` objects:
 
 The Vite adapter serializes the manifest into the virtual module, turning
 `$`-prefixed refs into dynamic imports and `$$`-prefixed refs into static
-imports, each tree-shaken down to the picked exports. It serves two views of
-the same entries:
+imports, each tree-shaken down to the picked exports. Splitting is not always
+a win — on a small app the per-chunk overhead can leave the split bundle
+larger — so `fileRoutes({ codeSplitting: false })` delivers `$` refs eagerly
+too (`{ src, require }`, statically imported); emission adapters branch on
+the delivered shape, so no second switch exists on their side. The module
+serves two views of the same entries:
 
 ```ts
 import routes, { pageRoutes } from "virtual:file-routes";
@@ -305,6 +309,7 @@ fileRoutes({
 | `httpMethods` | emit `$GET`, `$POST`, … refs for uppercase handler exports; a module with handlers but no default export routes without being a page |
 | `components` | set `false` to route without emitting `$component` refs, keeping page modules out of that environment's bundle |
 | `buildInputs` | environments whose build takes every code-split route module as an entry |
+| `codeSplitting` | set `false` to deliver every module ref as an eager static import — no `lazy()` components, zero dynamic imports, one bundle — for small apps where per-chunk overhead outweighs the split (defaults to `true`) |
 | `moduleId` | the id the manifest is served from |
 | `optimizeDepsExclude` | escape hatch for packages that import the virtual module, kept out of dep prebundling (defaults to `[]`) |
 | `types` | write a declaration typing the manifest as a literal tuple, kept in step with the route directory |

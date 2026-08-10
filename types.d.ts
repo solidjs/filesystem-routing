@@ -22,6 +22,8 @@ declare module "virtual:file-routes" {
 
   /** An eager ref: its picked exports are imported statically. */
   export interface FileRouteEagerRef {
+    /** The source module path — present when the convention emitted the ref lazy and `codeSplitting: false` delivered it eagerly. */
+    src?: string;
     require(): Record<string, unknown>;
   }
 
@@ -34,8 +36,8 @@ declare module "virtual:file-routes" {
     path: string;
     /** `true` when the module renders a page. */
     page?: boolean;
-    /** The page component module. */
-    $component?: FileRouteLazyRef;
+    /** The page component module: code-split by default, an eager ref under `codeSplitting: false`. */
+    $component?: FileRouteLazyRef | FileRouteEagerRef;
     /** The route config (`route` export), when the module has one. */
     $$route?: FileRouteEagerRef;
     /** Refs added by convention extensions, e.g. `$GET` handlers. */

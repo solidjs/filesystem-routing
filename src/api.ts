@@ -45,9 +45,12 @@ export interface FileRouteHandlers {
   [key: string]: unknown;
 }
 
-export interface APIHandlerRef {
-  import(): Promise<Record<string, APIHandler>>;
-}
+/**
+ * A handler module ref as delivered: code-split (`import()`) by default,
+ * eager (`require()`) when the delivery adapter runs with code splitting off.
+ */
+export type APIHandlerRef =
+  { import(): Promise<Record<string, APIHandler>> } | { require(): Record<string, APIHandler> };
 
 export interface APIMatch {
   handler: APIHandlerRef;
@@ -191,7 +194,8 @@ export function createAPIHandler(
     const matched = match(stripPathBase(url.pathname, options.base ?? "/"), request.method);
     if (!matched) return next();
 
-    const mod = await matched.handler.import();
+    const mod =
+      "require" in matched.handler ? matched.handler.require() : await matched.handler.import();
     const fn = request.method === "HEAD" ? mod.HEAD || mod.GET : mod[request.method];
     if (typeof fn !== "function") return next();
 

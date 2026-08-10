@@ -280,6 +280,72 @@ describe("fileRoutes vite plugin", () => {
     });
   });
 
+  describe("codeSplitting: false", () => {
+    const root = () =>
+      createRouteTree({
+        "index.tsx": "export default () => <h1>Home</h1>;",
+        "blog/[id].tsx": `
+          export const route = { preload: () => {} };
+          export default () => <h1>Post</h1>;
+        `,
+        "api/users.ts": "export const POST = () => new Response('created');"
+      });
+
+    it("delivers lazy refs eagerly: static namespace imports, require-shaped refs", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { codeSplitting: false });
+
+      const code = await loadWith(plugin, directory);
+
+      // zero dynamic imports anywhere in the module
+      expect(code).not.toContain("import(");
+      // component refs are statically imported behind the eager `require`
+      // shape — a namespace import, since the synthetic `$css` pick is not
+      // a real export — and keep the `src` lazy refs expose
+      expect(code).toMatch(
+        /import \* as routeModule\d from '[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx';/
+      );
+      expect(code).toMatch(/"\$component":\{"src":"[^"]+","require":\(\) => \(routeModule\d\)\}/);
+      // `$$` refs were already eager and are unchanged
+      expect(code).toMatch(
+        /import { route as routeData\d } from '[^']*\[id\]\.tsx\?pick=route&lang\.tsx';/
+      );
+    });
+
+    it("delivers handler refs eagerly to server environments too", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { codeSplitting: false, httpMethods: true });
+
+      const code = await loadWith(plugin, directory, "ssr");
+
+      expect(code).toContain('"$POST"');
+      expect(code).not.toContain("import(");
+      expect(code).toMatch(
+        /import \* as routeModule\d from '[^']*api\/users\.ts\?pick=POST&lang\.ts';/
+      );
+    });
+
+    it("contributes no build inputs — nothing is code-split", async () => {
+      const plugin = createPlugin(root(), { codeSplitting: false, buildInputs: "client" });
+
+      expect(await plugin.configEnvironment("client", {}, { command: "build" })).toBeUndefined();
+    });
+
+    it("types lazy refs as delivered: eager", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { codeSplitting: false, types: "generated.d.ts" });
+
+      await plugin.buildStart.call({});
+      const declaration = fs.readFileSync(path.join(directory, "generated.d.ts"), "utf-8");
+
+      expect(declaration).toMatch(
+        /\$component: FileRouteEagerRef<typeof import\("\.\/src\/routes\/index"\)>/
+      );
+      // no delivered ref is typed lazy (the interface itself stays declared)
+      expect(declaration).not.toMatch(/\$\w+: FileRouteLazyRef/);
+    });
+  });
+
   describe("buildInputs", () => {
     const root = () =>
       createRouteTree({

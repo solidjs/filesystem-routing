@@ -46,6 +46,17 @@ export interface FileRoutesOptions extends Pick<
    */
   buildInputs?: string | string[];
   /**
+   * Deliver `$`-prefixed module refs as code-split dynamic imports, each
+   * route its own chunk. The default. Set to `false` to deliver every ref
+   * eagerly instead — static imports, `require()`-shaped refs, zero dynamic
+   * imports in the output — for the apps where splitting loses: small apps
+   * whose per-chunk overhead outweighs the split, and targets that want a
+   * single bundle. Adapters need no switch of their own: refs are
+   * self-describing (`import()` is code-split, `require()` is eager), and
+   * emission adapters branch on the shape they are handed.
+   */
+  codeSplitting?: boolean;
+  /**
    * Packages that import the virtual module and must therefore stay out of
    * esbuild's dependency prebundling, which cannot resolve it. Emission
    * adapters are expected to take the manifest as an argument instead of
@@ -101,7 +112,10 @@ function stripHandlerRefs(routes: RouteManifestEntry[]): RouteManifestEntry[] {
     // Entries carry `$component: undefined` placeholders; only a ref with a
     // value keeps a handler-only entry alive. Otherwise not even the API
     // path string reaches the client bundle.
-    if (rest.page || Object.keys(rest).some(key => key.startsWith("$") && rest[key] !== undefined)) {
+    if (
+      rest.page ||
+      Object.keys(rest).some(key => key.startsWith("$") && rest[key] !== undefined)
+    ) {
       stripped.push(rest);
     }
   }
@@ -129,6 +143,7 @@ function stripHandlerRefs(routes: RouteManifestEntry[]): RouteManifestEntry[] {
  */
 export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
   const virtualId = options.moduleId ?? moduleId;
+  const codeSplitting = options.codeSplitting !== false;
   const buildInputs =
     options.buildInputs === undefined
       ? []
@@ -162,7 +177,8 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
       virtualId,
       routes,
       buildRouteTree(routes.filter(route => route.page)),
-      dirname(file)
+      dirname(file),
+      codeSplitting
     );
 
     // Only touch the file when it actually changes: every environment calls
@@ -219,6 +235,10 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         await writeTypes();
       },
       async configEnvironment(name, _config, env) {
+        // Without code splitting no ref becomes a dynamic import, so no
+        // route module needs to be an entry: they are all statically
+        // reachable from the virtual module.
+        if (!codeSplitting) return;
         if (env.command !== "build" || !buildInputs.includes(name)) return;
 
         const router = getRouter(name);
@@ -289,6 +309,16 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
               };
             } else if (key.startsWith("$")) {
               const buildId = toModuleId(value);
+              // With code splitting off the ref is delivered eagerly: a
+              // namespace import (named imports would fail on the synthetic
+              // `$css` pick) behind the `require()` shape eager refs carry,
+              // plus the `src` lazy refs already expose.
+              if (!codeSplitting) {
+                return {
+                  src: relative(root, buildId),
+                  require: `_$() => (${js.addNamespaceImport(buildId)})$_`
+                };
+              }
               return {
                 src: relative(root, buildId),
                 build: isBuild ? `_$() => import('${buildId}')$_` : undefined,
@@ -340,6 +370,7 @@ export const pageRoutes = ${serializeTree(tree)};
 
 function jsCode() {
   const imports = new Map<string, Record<string, string>>();
+  const namespaceImports = new Map<string, string>();
   let vars = 0;
 
   function addNamedImport(name: string, source: string) {
@@ -359,19 +390,32 @@ function jsCode() {
     return alias;
   }
 
+  function addNamespaceImport(source: string) {
+    const existing = namespaceImports.get(source);
+    if (existing) return existing;
+
+    const alias = "routeModule" + namespaceImports.size;
+    namespaceImports.set(source, alias);
+    return alias;
+  }
+
   const getImportStatements = () => {
-    return [...imports.entries()]
-      .map(
+    return [
+      ...[...imports.entries()].map(
         ([source, names]) =>
           `import { ${Object.entries(names)
             .map(([name, alias]) => `${name} as ${alias}`)
             .join(", ")} } from '${source}';`
+      ),
+      ...[...namespaceImports.entries()].map(
+        ([source, alias]) => `import * as ${alias} from '${source}';`
       )
-      .join("\n");
+    ].join("\n");
   };
 
   return {
     addNamedImport,
+    addNamespaceImport,
     getImportStatements
   };
 }

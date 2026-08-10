@@ -29,6 +29,8 @@ const REF_TYPES = `  /** A code-split ref: the delivery adapter emits it as a dy
 
   /** An eager ref: its picked exports are imported statically. */
   export interface FileRouteEagerRef<M = Record<string, unknown>> {
+    /** The source module path — present when the convention emitted the ref lazy and \`codeSplitting: false\` delivered it eagerly. */
+    src?: string;
     require(): M;
   }
 
@@ -36,7 +38,7 @@ const REF_TYPES = `  /** A code-split ref: the delivery adapter emits it as a dy
   export interface FileRouteEntry {
     path: string;
     page?: boolean;
-    $component?: FileRouteLazyRef<any>;
+    $component?: FileRouteLazyRef<any> | FileRouteEagerRef<any>;
     $$route?: FileRouteEagerRef<any>;
     [key: string]: unknown;
   }
@@ -77,7 +79,8 @@ function entryType(
   entry: RouteManifestEntry,
   indent: string,
   nested: boolean,
-  from: string
+  from: string,
+  codeSplitting: boolean
 ): string {
   const inner = indent + "  ";
   const fields: string[] = [`path: ${JSON.stringify(entry.path)}`];
@@ -89,7 +92,9 @@ function entryType(
   // so go by the value, not the key.
   const refKeys = Object.keys(entry).filter(key => key.startsWith("$") && entry[key] !== undefined);
   for (const key of refKeys) {
-    const kind = isEagerRefKey(key) ? "eager" : "lazy";
+    // With code splitting off, the delivery adapter materializes lazy refs
+    // eagerly, so the declaration describes them as delivered.
+    const kind = isEagerRefKey(key) || !codeSplitting ? "eager" : "lazy";
     fields.push(`${key}: ${refType(entry[key] as ModuleRef, kind, from)}`);
   }
   // Reading an absent ref is how adapters branch, so keep the key present.
@@ -100,7 +105,7 @@ function entryType(
     const children = (entry as RouteTreeEntry).children;
     fields.push(
       children?.length
-        ? `children: ${tupleType(children, inner, true, from)}`
+        ? `children: ${tupleType(children, inner, true, from, codeSplitting)}`
         : `children?: undefined`
     );
   }
@@ -112,12 +117,13 @@ function tupleType(
   entries: readonly RouteManifestEntry[],
   indent: string,
   nested: boolean,
-  from: string
+  from: string,
+  codeSplitting: boolean
 ) {
   if (!entries.length) return "readonly []";
   const inner = indent + "  ";
   const members = entries
-    .map(entry => `${inner}${entryType(entry, inner, nested, from)}`)
+    .map(entry => `${inner}${entryType(entry, inner, nested, from, codeSplitting)}`)
     .join(",\n");
   return `readonly [\n${members}\n${indent}]`;
 }
@@ -132,7 +138,9 @@ export function serializeTypes(
   routes: readonly RouteManifestEntry[],
   pageRoutes: readonly RouteTreeEntry[],
   /** Directory the declaration is written to; module specifiers are relative to it. */
-  from: string
+  from: string,
+  /** Whether lazy refs are delivered code-split (the default) or eagerly. */
+  codeSplitting = true
 ): string {
   return `${HEADER}
 
@@ -140,11 +148,11 @@ declare module ${JSON.stringify(moduleId)} {
 ${REF_TYPES}
 
   /** The flat route manifest, in scan order. */
-  const routes: ${tupleType(routes, "  ", false, from)};
+  const routes: ${tupleType(routes, "  ", false, from, codeSplitting)};
   export default routes;
 
   /** The page entries, nested by path with grouping segments stripped. */
-  export const pageRoutes: ${tupleType(pageRoutes, "  ", true, from)};
+  export const pageRoutes: ${tupleType(pageRoutes, "  ", true, from, codeSplitting)};
 }
 `;
 }
