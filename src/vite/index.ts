@@ -54,6 +54,10 @@ export interface FileRoutesOptions extends Pick<
    * single bundle. Adapters need no switch of their own: refs are
    * self-describing (`import()` is code-split, `require()` is eager), and
    * emission adapters branch on the shape they are handed.
+   *
+   * With `@solidjs/router`, `codeSplitting: false` requires the next release
+   * (newer than `2.0.0-next.14`): its adapter must branch on eager refs, and
+   * against `next.14` or older, enabling this option fails at first render.
    */
   codeSplitting?: boolean;
   /**
