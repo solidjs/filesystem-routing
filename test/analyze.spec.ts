@@ -8,9 +8,9 @@ import { PageFileSystemRouter } from "../src/convention.ts";
 
 const temporaryDirectories: string[] = [];
 
-function writeRoute(source: string) {
+function writeRoute(source: string, name = "route.tsx") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "file-routes-"));
-  const filename = path.join(directory, "route.tsx");
+  const filename = path.join(directory, name);
   temporaryDirectories.push(directory);
   fs.writeFileSync(filename, source);
   return filename;
@@ -81,5 +81,63 @@ describe("analyzeModule", () => {
     });
 
     expect(router.toRoute(route)?.$component?.pick).toEqual(["default", "$css"]);
+  });
+
+  it("returns runtime exports from TSRX modules", () => {
+    const route = writeRoute(
+      `
+      export type TypeOnly = string;
+      export const route = {
+        preload: () => {}
+      };
+      export function GET() {}
+      export default function Route(props: { title?: string }) @{
+        const label = props.title ?? "TSRX";
+        <main>
+          <style>
+            .hero { color: rgb(0, 0, 0); }
+          </style>
+          @if (label.length > 0) {
+            <h1 class="hero">{label}</h1>
+          }
+        </main>
+      }
+    `,
+      "route.tsrx"
+    );
+
+    const exports = analyzeModule(route);
+
+    expect(
+      exports.map(entry => entry.exportName.name ?? entry.exportName.kind.toLowerCase())
+    ).toEqual(["route", "GET", "default"]);
+    expect(exports.every(entry => !entry.isType)).toBe(true);
+  });
+
+  it("applies the page convention to TSRX modules", () => {
+    const route = writeRoute(
+      `
+      export const route = { preload: () => {} };
+      export default function Route() @{
+        <main />
+      }
+    `,
+      "route.tsrx"
+    );
+    const router = new PageFileSystemRouter({
+      dir: path.dirname(route),
+      extensions: ["tsx", "tsrx"]
+    });
+
+    const entry = router.toRoute(route);
+    expect(entry?.page).toBe(true);
+    expect(entry?.$component?.pick).toEqual(["default", "$css"]);
+    expect(entry?.$$route?.pick).toEqual(["route"]);
+  });
+
+  it("throws on invalid TSRX route syntax", () => {
+    const route = writeRoute("export default function Route() @{", "route.tsrx");
+
+    expect(() => analyzeModule(route)).toThrow(`Failed to parse ${route}`);
   });
 });

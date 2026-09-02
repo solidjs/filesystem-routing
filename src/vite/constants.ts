@@ -6,4 +6,4 @@
  */
 export const moduleId = "virtual:file-routes";
 
-export const DEFAULT_EXTENSIONS = ["js", "jsx", "ts", "tsx"];
+export const DEFAULT_EXTENSIONS = ["js", "jsx", "ts", "tsx", "tsrx"];
