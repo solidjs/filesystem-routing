@@ -62,7 +62,7 @@ describe("fileRoutes vite plugin", () => {
     expect(code).toMatch(
       /import { route as routeData0 } from '[^']*\[id\]\.tsx\?pick=route&lang\.tsx';/
     );
-    expect(code).toContain(`"path":"/blog/:id"`);
+    expect(code).toContain(`path: "/blog/:id"`);
     expect(code).toContain(`'route': routeData0`);
   });
 
@@ -76,13 +76,59 @@ describe("fileRoutes vite plugin", () => {
     const code = await loadVirtualModule(root);
 
     // the layout keeps its group segment in the flat view...
-    expect(code).toContain(`"path":"/(app)"`);
+    expect(code).toContain(`path: "/(app)"`);
     // ...and loses it in the nested one, where the child is relative to it
     expect(code).toMatch(
       /export const pageRoutes = \[\{ \.\.\.route\d, id: "\/\(app\)", path: "\/", children: \[\{ \.\.\.route\d, id: "\/dashboard", path: "\/dashboard" \}\] \}\]/
     );
     // entries are referenced, not copied, so refs are emitted exactly once
     expect(code.match(/pick=default&pick=\$css&lang\.tsx'\)/g)?.length).toBe(2);
+  });
+
+  it("assigns each route view its own path once", async () => {
+    const root = createRouteTree({});
+    const router = {
+      getRoutes: async () => [
+        { path: "/(app)", page: true, metadata: { level: 0 } },
+        { path: "/(app)/dashboard", page: true, metadata: { level: 1 } },
+        { path: "/(app)/dashboard/settings", page: true, metadata: { level: 2 } }
+      ]
+    } as unknown as PageFileSystemRouter;
+
+    const code = await loadWith(createPlugin(root, { router }), root);
+    const sharedEntries = [...code.matchAll(/^const route\d+ = (\{.*\});$/gm)].map(match =>
+      JSON.parse(match[1])
+    );
+
+    // A shared entry must not contain either view's path. Otherwise the
+    // pageRoutes spread assigns the flat path before it assigns the tree path.
+    expect(sharedEntries).toHaveLength(3);
+    expect(sharedEntries.every(entry => !Object.hasOwn(entry, "path"))).toBe(true);
+
+    const module = await import(
+      `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
+    );
+
+    expect(module.default.map((route: { path: string }) => route.path)).toEqual([
+      "/(app)",
+      "/(app)/dashboard",
+      "/(app)/dashboard/settings"
+    ]);
+    expect(module.pageRoutes).toMatchObject([
+      {
+        id: "/(app)",
+        path: "/",
+        children: [
+          {
+            id: "/dashboard",
+            path: "/dashboard",
+            children: [{ id: "/settings", path: "/settings" }]
+          }
+        ]
+      }
+    ]);
+    // Both views still share the non-path fields and their nested values.
+    expect(module.default[0].metadata).toBe(module.pageRoutes[0].metadata);
   });
 
   it("resolves only the virtual module id", async () => {
@@ -229,7 +275,7 @@ describe("fileRoutes vite plugin", () => {
       expect(code).not.toContain("/api/users");
       // the page half of a page+handler module stays routable
       expect(code).toMatch(/import\('[^']*users\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
-      expect(code).toContain('"path":"/users"');
+      expect(code).toContain('path: "/users"');
     });
 
     it("splits by consumer, not by name, when the environment declares one", async () => {

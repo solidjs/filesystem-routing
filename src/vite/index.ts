@@ -334,11 +334,12 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
             .replaceAll('"_$(', "(")
             .replaceAll(')$_"', ")");
 
-        // Entries are emitted once and both views reference them, so the
-        // nested view costs its own paths and nothing else.
-        const bindings = routes.map(
-          (route, index) => `const route${index} = ${serializeEntry(route)};`
-        );
+        // Emit the fields that both views share once. Each view adds its own
+        // path, so the nested view does not overwrite the flat manifest path.
+        const bindings = routes.map((route, index) => {
+          const { path: _path, ...fields } = route;
+          return `const route${index} = ${serializeEntry(fields)};`;
+        });
 
         const tree = buildRouteTree(
           routes
@@ -361,7 +362,9 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
 
         return `${js.getImportStatements()}
 ${bindings.join("\n")}
-const routes = [${routes.map((_, index) => `route${index}`).join(", ")}];
+const routes = [${routes
+          .map((route, index) => `{ path: ${JSON.stringify(route.path)}, ...route${index} }`)
+          .join(", ")}];
 export default routes;
 export const pageRoutes = ${serializeTree(tree)};
 `;
