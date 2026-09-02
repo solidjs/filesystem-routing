@@ -1,7 +1,42 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { parseSync, type StaticExportEntry } from "oxc-parser";
 
 export type { StaticExportEntry };
+
+/**
+ * `oxc-parser` cannot read TSRX syntax, so `.tsrx` route modules go through
+ * the official TSRX oxc integration instead. `@tsrx/oxc/parser` mirrors the
+ * `oxc-parser` API (same `ParseResult` shape, same static-export entries), so
+ * the analysis below is parser-agnostic. The package is an optional peer:
+ * it is loaded lazily, only when a `.tsrx` route module is actually scanned.
+ */
+type ParseFn = (
+  filename: string,
+  sourceText: string,
+  options: { lang: string }
+) => ReturnType<typeof parseSync>;
+
+let tsrxParseSync: ParseFn | undefined;
+
+function loadTsrxParser(src: string): ParseFn {
+  if (!tsrxParseSync) {
+    try {
+      const facade = createRequire(import.meta.url)("@tsrx/oxc/parser") as {
+        parseSync: ParseFn;
+      };
+      tsrxParseSync = facade.parseSync;
+    } catch (cause) {
+      throw new Error(
+        `Cannot analyze the TSRX route module ${src}: analyzing .tsrx exports requires ` +
+          `the optional peer dependency @tsrx/oxc. Install it (npm i -D @tsrx/oxc) ` +
+          `or keep route modules in .ts/.tsx.`,
+        { cause }
+      );
+    }
+  }
+  return tsrxParseSync;
+}
 
 /**
  * Analyze a route module's static exports.
@@ -11,7 +46,21 @@ export type { StaticExportEntry };
  * a compiler that already performs export analysis can provide it instead.
  */
 export function analyzeModule(src: string): StaticExportEntry[] {
-  const result = parseSync(src, fs.readFileSync(src, "utf-8"), { lang: "tsx" });
+  const source = fs.readFileSync(src, "utf-8");
+  let result: ReturnType<typeof parseSync>;
+  if (src.endsWith(".tsrx")) {
+    const parse = loadTsrxParser(src);
+    // The TSRX facade reports most syntax errors through `result.errors` but
+    // throws on some malformed sources; normalize both into the same shape.
+    try {
+      result = parse(src, source, { lang: "tsrx" });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      throw new SyntaxError(`Failed to parse ${src}:\n${message}`, { cause });
+    }
+  } else {
+    result = parseSync(src, source, { lang: "tsx" });
+  }
   const error = result.errors[0];
   if (error) throw new SyntaxError(`Failed to parse ${src}:\n${error.codeframe || error.message}`);
 
