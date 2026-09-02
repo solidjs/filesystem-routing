@@ -85,6 +85,20 @@ describe("fileRoutes vite plugin", () => {
     expect(code.match(/pick=default&pick=\$css&lang\.tsx'\)/g)?.length).toBe(2);
   });
 
+  it("serializes lazy-ref src values with forward slashes", async () => {
+    const directory = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;"
+    });
+
+    const split = await loadVirtualModule(directory);
+    const eager = await loadWith(createPlugin(directory, { codeSplitting: false }), directory);
+
+    expect(split).toContain('"src"');
+    expect(eager).toContain('"src"');
+    expect(split).not.toContain("\\");
+    expect(eager).not.toContain("\\");
+  });
+
   it("resolves only the virtual module id", async () => {
     const [plugin] = fileRoutes() as any[];
     expect(moduleId).toBe("virtual:file-routes");
