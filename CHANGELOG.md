@@ -1,5 +1,11 @@
 # filesystem-routing
 
+## 0.3.1
+
+### Patch Changes
+
+- fa2ddc7: Only strip a whole `index` segment when mapping route files to paths. Route files whose names merely end in "index", such as `routes/reindex.tsx`, were previously mapped to `/re` instead of `/reindex`.
+
 ## 0.3.0
 
 ### Minor Changes
