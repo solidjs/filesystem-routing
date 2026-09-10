@@ -14,7 +14,8 @@ export function routePathFromFile(routeFile: string): string {
   const routePath = routeFile
     // remove the initial slash
     .slice(1)
-    .replace(/index$/, "")
+    // only strip a whole `index` segment, not a name that merely ends in "index" (e.g. `reindex`)
+    .replace(/(^|\/)index$/, "$1")
     .replace(/\[([^/]+)\]/g, (_, m) => {
       if (m.length > 3 && m.startsWith("...")) {
         return `*${m.slice(3)}`;

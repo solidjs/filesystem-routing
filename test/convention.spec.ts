@@ -28,6 +28,16 @@ describe("routePathFromFile", () => {
   it("retains group segments for emission adapters", () => {
     expect(routePathFromFile("/(marketing)/about")).toBe("/(marketing)/about");
   });
+
+  // https://github.com/solidjs/solid-start/issues/2314
+  it("only strips index as a whole segment, not as a filename suffix", () => {
+    expect(routePathFromFile("/reindex")).toBe("/reindex");
+    expect(routePathFromFile("/myindex")).toBe("/myindex");
+    expect(routePathFromFile("/appendix")).toBe("/appendix");
+    expect(routePathFromFile("/blog/reindex")).toBe("/blog/reindex");
+    expect(routePathFromFile("/reindex/index")).toBe("/reindex/");
+    expect(routePathFromFile("/[id]/index")).toBe("/:id/");
+  });
 });
 
 const temporaryDirectories: string[] = [];
@@ -73,6 +83,19 @@ describe("PageFileSystemRouter", () => {
     expect(post.page).toBe(true);
     expect(post.$component?.pick).toEqual(["default", "$css"]);
     expect(post.$$route?.pick).toEqual(["route"]);
+  });
+
+  it("keeps route files whose names end in index at their own path", async () => {
+    const dir = createRouteTree({
+      "reindex.tsx": "export default () => <h1>Reindex</h1>;",
+      "blog/index.tsx": "export default () => <h1>Blog</h1>;",
+      "blog/myindex.tsx": "export default () => <h1>My index</h1>;"
+    });
+    const router = new PageFileSystemRouter({ dir, extensions: ["tsx"] });
+
+    const paths = (await router.getRoutes()).map(route => route.path).sort();
+
+    expect(paths).toEqual(["/blog/", "/blog/myindex", "/reindex"]);
   });
 
   it("resolves a relative dir against the current working directory", async () => {
