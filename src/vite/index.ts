@@ -319,12 +319,12 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
               // plus the `src` lazy refs already expose.
               if (!codeSplitting) {
                 return {
-                  src: relative(root, buildId),
+                  src: normalizePath(relative(root, buildId)),
                   require: `_$() => (${js.addNamespaceImport(buildId)})$_`
                 };
               }
               return {
-                src: relative(root, buildId),
+                src: normalizePath(relative(root, buildId)),
                 build: isBuild ? `_$() => import('${buildId}')$_` : undefined,
                 import: `_$() => import('${buildId}')$_`
               };

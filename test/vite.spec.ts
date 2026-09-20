@@ -85,6 +85,21 @@ describe("fileRoutes vite plugin", () => {
     expect(code.match(/pick=default&pick=\$css&lang\.tsx'\)/g)?.length).toBe(2);
   });
 
+  it("serializes lazy-ref src values with forward slashes", async () => {
+    const directory = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;"
+    });
+
+    const split = await loadVirtualModule(directory);
+    const eager = await loadWith(createPlugin(directory, { codeSplitting: false }), directory);
+
+    // `src` is matched against Vite's manifest keys, which are always posix,
+    // so it must not carry the platform separator node:path emits on Windows
+    const src = '"src":"src/routes/index.tsx?pick=default&pick=$css&lang.tsx"';
+    expect(split).toContain(src);
+    expect(eager).toContain(src);
+  });
+
   it("resolves only the virtual module id", async () => {
     const [plugin] = fileRoutes() as any[];
     expect(moduleId).toBe("virtual:file-routes");
