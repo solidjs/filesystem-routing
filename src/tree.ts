@@ -46,7 +46,7 @@ export function buildRouteTree(entries: readonly RouteManifestEntry[]): RouteTre
   }
 
   return [...entries]
-    .sort((a, b) => a.path.length - b.path.length)
+    .sort((a, b) => (a.path.length - b.path.length) || a.path.localeCompare(b.path))
     .reduce((routes: RouteTreeEntry[], route) => {
       processRoute(routes, route, route.path);
       return routes;

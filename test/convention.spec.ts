@@ -226,4 +226,43 @@ describe("PageFileSystemRouter", () => {
 
     expect(routes.map(route => route.path)).toEqual(["/home"]);
   });
+
+  it("produces the manifest in a deterministic order across scans", async () => {
+    const dir = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;",
+      "about.tsx": "export default () => <h1>About</h1>;",
+      "zebra.tsx": "export default () => <h1>Z</h1>;",
+      "blog/index.tsx": "export default () => <h1>Blog</h1>;",
+      "blog/[id].tsx": "export default () => <h1>Post</h1>;",
+      "docs/[...path].tsx": "export default () => <h1>Docs</h1>;",
+      "contact.tsx": "export default () => <h1>Contact</h1>;"
+    });
+
+    // Fresh router per scan — getRoutes() memoizes, so a new instance
+    // forces a real re-glob each time. Map to paths but do NOT .sort().
+    const scan = async () =>
+      (await new PageFileSystemRouter({ dir, extensions: ["tsx"] }).getRoutes())
+        .map(route => route.path);
+
+    const first = await scan();
+
+    // 1. Repeatable: N independent scans yield the same order.
+    for (let i = 0; i < 5; i++) {
+      expect(await scan()).toEqual(first);
+    }
+
+    // 2. Pin the exact order so the guarantee is explicit.
+    // The sort is on source file paths (lexicographic), so the order
+    // reflects that: about.tsx < blog/[id].tsx < blog/index.tsx <
+    // contact.tsx < docs/[...path].tsx < index.tsx < zebra.tsx.
+    expect(first).toEqual([
+      "/about",
+      "/blog/:id",
+      "/blog/",
+      "/contact",
+      "/docs/*path",
+      "/",
+      "/zebra"
+    ]);
+  });
 });

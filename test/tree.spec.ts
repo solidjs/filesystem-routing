@@ -52,4 +52,17 @@ describe("buildRouteTree", () => {
     expect(entries.map(e => e.path)).toEqual(paths);
     expect(entries.every(e => !("children" in e))).toBe(true);
   });
+
+  it("sorts equal-length paths deterministically", () => {
+    const tree = buildRouteTree([
+      entry("/zebra"),
+      entry("/about"),
+      entry("/alpha")
+    ]);
+
+    // All have the same path length, so the tie-breaker (localeCompare)
+    // guarantees a stable lexicographic order instead of relying on
+    // whatever order the glob happened to return.
+    expect(tree.map(node => node.path)).toEqual(["/about", "/alpha", "/zebra"]);
+  });
 });
