@@ -71,7 +71,7 @@ export class BaseFileSystemRouter extends EventTarget {
   }
 
   async buildRoutes(): Promise<RouteManifestEntry[]> {
-    for (const src of glob(this.glob())) {
+    for (const src of glob(this.glob()).sort()) {
       await this.addRoute(src);
     }
 
