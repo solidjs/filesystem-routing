@@ -190,6 +190,50 @@ server environment's router only (SolidStart pairs it with `components:
 false` in SPA mode, so the server manifest routes requests without shipping
 page modules) — see the per-environment `routers` option below.
 
+## Server-function pages
+
+With `serverComponents: true`, a page whose default export begins with a
+`"use server"` directive is a server-function page:
+
+```tsx
+// src/routes/stories/[id].tsx
+export const route = { live: true }; // any config the emission adapter reads
+
+export default async function Story({ params }) {
+  "use server";
+  const story = await db.stories.get(params.id);
+  return props => <article>{story.title}{props.children}</article>;
+}
+```
+
+The scanner sees the directive (on an inline function declaration or
+expression, or a top-level function the default export names — not through
+a wrapper call or a re-export) and records two neutral facts on the entry:
+`server: true`, and a `$component` ref marked `eager` and picking only
+`default`. The client side of such a module is a stub, so there is no code
+worth a chunk: the Vite adapter delivers the ref eagerly (`{ src, require }`)
+even with code splitting on, and it is not a build input. What a
+server-rendered page *means* — how the stub is called, cached, and mounted —
+is the emission adapter's business; the scanner only states the fact.
+
+Adapters that carry code only server pages need gate it on
+`filesystem-routing/flags`:
+
+```ts
+import { serverRoutes } from "filesystem-routing/flags";
+import * as server from "./server.js"; // dropped from builds with no server page
+
+if (serverRoutes && entry.server) server.wrap(entry);
+```
+
+The package ships `flags` as a real module whose facts are all `true` — the
+safe answer wherever no plugin hook is in the loop (dev prebundling, a
+hand-built manifest, another bundler). In builds the Vite plugin serves the
+scan's answer instead, folded to a literal, so a gated static import
+tree-shakes out of every app without a server page and is an ordinary
+static import — present at hydration — in every app with one. The option is
+off by default; a manifest built without it is byte-identical to before.
+
 ## Custom conventions
 
 Conventions plug in at two independent seams, so a custom scheme picks the
@@ -310,6 +354,7 @@ fileRoutes({
 | --- | --- |
 | `httpMethods` | emit `$GET`, `$POST`, … refs for uppercase handler exports; a module with handlers but no default export routes without being a page |
 | `components` | set `false` to route without emitting `$component` refs, keeping page modules out of that environment's bundle |
+| `serverComponents` | recognize server-function pages: a `"use server"` default export is flagged `server: true` and delivered eagerly; scan facts are served from `filesystem-routing/flags` (defaults to `false`) |
 | `buildInputs` | environments whose build takes every code-split route module as an entry |
 | `codeSplitting` | set `false` to deliver every module ref as an eager static import — no `lazy()` components, zero dynamic imports, one bundle — for small apps where per-chunk overhead outweighs the split (defaults to `true`; with `@solidjs/router` requires the next release, newer than `2.0.0-next.14`) |
 | `moduleId` | the id the manifest is served from |

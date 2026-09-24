@@ -6,7 +6,7 @@ import { PageFileSystemRouter, type PageFileSystemRouterConfig } from "../conven
 import type { ModuleRef, RouteManifestEntry } from "../manifest.ts";
 import { BaseFileSystemRouter, normalizePath } from "../router.ts";
 import { buildRouteTree, type RouteTreeEntry } from "../tree.ts";
-import { DEFAULT_EXTENSIONS, moduleId } from "./constants.ts";
+import { DEFAULT_EXTENSIONS, flagsId, moduleId, resolvedFlagsId } from "./constants.ts";
 import { fileSystemWatcher } from "./fs-watcher.ts";
 import { sanitizeChunkFileName, toPickId, treeShake } from "./tree-shake.ts";
 import { serializeTypes } from "./types.ts";
@@ -17,7 +17,7 @@ export { fileSystemWatcher } from "./fs-watcher.ts";
 
 export interface FileRoutesOptions extends Pick<
   PageFileSystemRouterConfig,
-  "components" | "httpMethods" | "toPath" | "toRoute"
+  "components" | "httpMethods" | "serverComponents" | "toPath" | "toRoute"
 > {
   /** Route directory, relative to the Vite root. Defaults to `src/routes`. */
   dir?: string;
@@ -230,6 +230,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
             extensions: options.extensions ?? DEFAULT_EXTENSIONS,
             components: options.components,
             httpMethods: options.httpMethods,
+            serverComponents: options.serverComponents,
             toPath: options.toPath,
             toRoute: options.toRoute
           });
@@ -262,7 +263,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         const input: string[] = [];
         for (const route of routes) {
           for (const [key, ref] of Object.entries(route)) {
-            if (ref && key.startsWith("$") && !key.startsWith("$$")) {
+            if (ref && key.startsWith("$") && !key.startsWith("$$") && !(ref as ModuleRef).eager) {
               input.push(toModuleId(ref as ModuleRef));
             }
           }
@@ -273,8 +274,20 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
       },
       resolveId(source) {
         if (source === virtualId) return virtualId;
+        if (source === flagsId) return resolvedFlagsId;
       },
       async load(loadedId) {
+        if (loadedId === resolvedFlagsId) {
+          // Facts about the scan, folded to literals so an adapter's static
+          // imports gated on them tree-shake out of a build that does not
+          // need them. In serve, always `true`: dev has no size to protect
+          // and the first server page must work without a restart.
+          const router = getRouter(this.environment.name);
+          const routes = (router && (await router.getRoutes())) ?? [];
+          const serverRoutes =
+            this.environment.mode !== "build" || routes.some(route => route.server === true);
+          return `export const serverRoutes = ${serverRoutes};`;
+        }
         if (loadedId !== virtualId) return;
 
         const root = this.environment.config.root;
@@ -313,11 +326,12 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
               };
             } else if (key.startsWith("$")) {
               const buildId = toModuleId(value);
-              // With code splitting off the ref is delivered eagerly: a
-              // namespace import (named imports would fail on the synthetic
-              // `$css` pick) behind the `require()` shape eager refs carry,
-              // plus the `src` lazy refs already expose.
-              if (!codeSplitting) {
+              // With code splitting off — or a ref the convention marked
+              // `eager` — the ref is delivered eagerly: a namespace import
+              // (named imports would fail on the synthetic `$css` pick)
+              // behind the `require()` shape eager refs carry, plus the
+              // `src` lazy refs already expose.
+              if (!codeSplitting || value.eager) {
                 return {
                   src: normalizePath(relative(root, buildId)),
                   require: `_$() => (${js.addNamespaceImport(buildId)})$_`

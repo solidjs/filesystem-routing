@@ -201,6 +201,51 @@ describe("PageFileSystemRouter", () => {
     expect(hybrid.$GET).toBeDefined();
   });
 
+  it("recognizes server-function pages only with `serverComponents`", async () => {
+    const files = {
+      "inline.tsx": `export default async function Story({ params }) { "use server"; return () => null; }`,
+      "arrow.tsx": `export default async ({ params }) => { "use server"; return () => null; };`,
+      "named.tsx": `
+        export const route = {};
+        async function Story() { "use server"; return () => null; }
+        export default Story;
+      `,
+      "client.tsx": `export default function Page() { return <h1 />; }`,
+      "wrapped.tsx": `export default wrap(async () => { "use server"; });`
+    };
+    const dir = createRouteTree(files);
+
+    // off by default: nothing changes, no module is looked at for directives
+    const off = await new PageFileSystemRouter({ dir, extensions: ["tsx"] }).getRoutes();
+    expect(off.every(route => route.server === undefined)).toBe(true);
+    expect(off.every(route => route.$component?.eager === undefined)).toBe(true);
+
+    const on = await new PageFileSystemRouter({
+      dir,
+      extensions: ["tsx"],
+      serverComponents: true
+    }).getRoutes();
+    const byPath = Object.fromEntries(on.map(route => [route.path, route]));
+
+    for (const path of ["/inline", "/arrow", "/named"]) {
+      expect(byPath[path].page).toBe(true);
+      expect(byPath[path].server).toBe(true);
+      // a stub has no code worth a chunk: eager, and only the default is picked
+      expect(byPath[path].$component).toEqual({
+        src: expect.any(String),
+        pick: ["default"],
+        eager: true
+      });
+    }
+    expect(byPath["/named"].$$route?.pick).toEqual(["route"]);
+    // a client page and a default the scanner cannot see into stay as they were
+    for (const path of ["/client", "/wrapped"]) {
+      expect(byPath[path].server).toBeUndefined();
+      expect(byPath[path].$component?.eager).toBeUndefined();
+      expect(byPath[path].$component?.pick).toEqual(["default", "$css"]);
+    }
+  });
+
   it("ignores HTTP handler exports by default", async () => {
     const dir = createRouteTree({
       "api/health.ts": "export const GET = () => new Response('ok');"

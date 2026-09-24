@@ -28,6 +28,12 @@ export interface ModuleRef {
   src: string;
   /** The named exports (or `"default"`) this ref selects from the module. */
   pick: string[];
+  /**
+   * Deliver eagerly even under code splitting. Set by a convention when the
+   * module has no client code worth a chunk — a server-function page, whose
+   * client side is a stub — so the ref is materialized `{ src, require }`.
+   */
+  eager?: boolean;
 }
 
 export interface RouteManifestEntry {
@@ -40,6 +46,13 @@ export interface RouteManifestEntry {
   path: string;
   /** `true` when the module renders a page (has a default export). */
   page?: boolean;
+  /**
+   * `true` when the page component is a server function — its default export
+   * begins with a `"use server"` directive. The convention delivers such a
+   * `$component` eagerly; what a server-rendered page means is the emission
+   * adapter's business.
+   */
+  server?: boolean;
   /** Lazy ref to the page component module. */
   $component?: ModuleRef;
   /** Eager ref to the route config (`route` export), when present. */

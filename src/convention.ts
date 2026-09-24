@@ -1,4 +1,4 @@
-import { analyzeModule, getExportName, getLocalExportName } from "./analyze.ts";
+import { analyzeRouteModule, getExportName, getLocalExportName } from "./analyze.ts";
 import type { ModuleRef, RouteManifestEntry } from "./manifest.ts";
 import { BaseFileSystemRouter, cleanPath, type FileSystemRouterConfig } from "./router.ts";
 
@@ -51,6 +51,14 @@ export interface PageFileSystemRouterConfig extends FileSystemRouterConfig {
    * Pass `true` for the standard set. Defaults to `false`.
    */
   httpMethods?: boolean | readonly string[];
+  /**
+   * Recognize server-function pages: a default export whose body begins with
+   * a `"use server"` directive is flagged `server: true` and its `$component`
+   * delivered eagerly — the client side of such a module is a stub, not a
+   * chunk's worth of component. What a server-rendered page means is the
+   * emission adapter's business. Defaults to `false`.
+   */
+  serverComponents?: boolean;
 }
 
 function httpMethodsOf(config: PageFileSystemRouterConfig): readonly string[] {
@@ -112,26 +120,36 @@ export class PageFileSystemRouter extends BaseFileSystemRouter {
     }
 
     const methods = httpMethodsOf(this.config);
-    const exports = analyzeModule(src);
+    const { exports, defaultDirective } = analyzeRouteModule(src);
     const exportNames = exports.map(getExportName);
     const localExportNames = exports.map(getLocalExportName).filter(name => name !== undefined);
     const hasDefault = exportNames.includes("default");
     const hasRouteConfig = exportNames.includes("route");
     const handlers = createHandlerRefs(src, exportNames, methods);
     const hasHandlers = Object.keys(handlers).length > 0;
+    // A server-function page (opt-in): the client gets a stub, not a chunk's
+    // worth of component, so it is delivered eagerly and flagged for the adapter.
+    const server =
+      this.config.serverComponents === true && hasDefault && defaultDirective === "use server";
 
     if (hasDefault || hasHandlers) {
       return {
         page: hasDefault,
+        ...(server ? { server } : {}),
         $component:
           components && hasDefault
             ? {
                 src: src,
-                pick: [
-                  ...localExportNames.filter(name => name !== "route" && !methods.includes(name)),
-                  "default",
-                  "$css"
-                ]
+                pick: server
+                  ? ["default"]
+                  : [
+                      ...localExportNames.filter(
+                        name => name !== "route" && !methods.includes(name)
+                      ),
+                      "default",
+                      "$css"
+                    ],
+                ...(server ? { eager: true } : {})
               }
             : undefined,
         $$route: hasRouteConfig

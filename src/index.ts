@@ -1,5 +1,5 @@
-export { analyzeModule, getExportName, getLocalExportName } from "./analyze.ts";
-export type { StaticExportEntry } from "./analyze.ts";
+export { analyzeModule, analyzeRouteModule, getExportName, getLocalExportName } from "./analyze.ts";
+export type { RouteModuleAnalysis, StaticExportEntry } from "./analyze.ts";
 export type { ModuleRef, RouteManifestEntry } from "./manifest.ts";
 export {
   BaseFileSystemRouter,

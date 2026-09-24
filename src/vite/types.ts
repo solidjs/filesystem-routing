@@ -38,6 +38,8 @@ const REF_TYPES = `  /** A code-split ref: the delivery adapter emits it as a dy
   export interface FileRouteEntry {
     path: string;
     page?: boolean;
+    /** The page component is a server function; its \`$component\` is delivered eagerly. */
+    server?: boolean;
     $component?: FileRouteLazyRef<any> | FileRouteEagerRef<any>;
     $$route?: FileRouteEagerRef<any>;
     [key: string]: unknown;
@@ -87,15 +89,18 @@ function entryType(
 
   if (nested) fields.push(`id: ${JSON.stringify((entry as RouteTreeEntry).id)}`);
   fields.push(`page: ${entry.page ? "true" : "false"}`);
+  if (entry.server) fields.push(`server: true`);
 
   // A convention records refs it did not emit as present-but-undefined keys,
   // so go by the value, not the key.
   const refKeys = Object.keys(entry).filter(key => key.startsWith("$") && entry[key] !== undefined);
   for (const key of refKeys) {
-    // With code splitting off, the delivery adapter materializes lazy refs
-    // eagerly, so the declaration describes them as delivered.
-    const kind = isEagerRefKey(key) || !codeSplitting ? "eager" : "lazy";
-    fields.push(`${key}: ${refType(entry[key] as ModuleRef, kind, from)}`);
+    // With code splitting off, or a ref the convention marked `eager`, the
+    // delivery adapter materializes lazy refs eagerly, so the declaration
+    // describes them as delivered.
+    const ref = entry[key] as ModuleRef;
+    const kind = isEagerRefKey(key) || !codeSplitting || ref.eager ? "eager" : "lazy";
+    fields.push(`${key}: ${refType(ref, kind, from)}`);
   }
   // Reading an absent ref is how adapters branch, so keep the key present.
   if (!refKeys.some(isLazyRefKey)) fields.push(`$component?: undefined`);

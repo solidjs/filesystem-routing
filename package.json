@@ -45,6 +45,10 @@
       "types": "./dist/api.d.ts",
       "default": "./dist/api.js"
     },
+    "./flags": {
+      "types": "./dist/flags.d.ts",
+      "default": "./dist/flags.js"
+    },
     "./types": {
       "types": "./types.d.ts"
     }

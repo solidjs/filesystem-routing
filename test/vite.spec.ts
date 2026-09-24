@@ -361,6 +361,71 @@ describe("fileRoutes vite plugin", () => {
     });
   });
 
+  describe("serverComponents", () => {
+    const root = () =>
+      createRouteTree({
+        "index.tsx": "export default () => <h1>Home</h1>;",
+        "stories/[id].tsx": `
+          export const route = { live: true };
+          export default async function Story({ params }) { "use server"; return () => null; }
+        `
+      });
+
+    it("delivers a server page eagerly and flags it, leaving client pages split", async () => {
+      const directory = root();
+      const code = await loadWith(createPlugin(directory, { serverComponents: true }), directory);
+
+      expect(code).toMatch(
+        /import \* as routeModule\d from '[^']*\[id\]\.tsx\?pick=default&lang\.tsx';/
+      );
+      expect(code).toMatch(
+        /"server":true,"\$component":\{"src":"[^"]+","require":\(\) => \(routeModule\d\)\}/
+      );
+      // the client page is still a code-split dynamic import
+      expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
+    });
+
+    it("is not a build input — the stub is inlined into the manifest", async () => {
+      const plugin = createPlugin(root(), { serverComponents: true, buildInputs: "client" });
+      const input: string[] = (await plugin.configEnvironment("client", {}, { command: "build" }))
+        .build.rollupOptions.input;
+      expect(input).toHaveLength(1);
+      expect(input[0]).toContain("index.tsx");
+    });
+
+    it("types the server page as delivered: eager, with `server: true`", async () => {
+      const directory = root();
+      const plugin = createPlugin(directory, { serverComponents: true, types: "generated.d.ts" });
+      await plugin.buildStart.call({});
+      const declaration = fs.readFileSync(path.join(directory, "generated.d.ts"), "utf-8");
+      expect(declaration).toMatch(
+        /server: true;\s*\n\s*\$component: FileRouteEagerRef<typeof import\("\.\/src\/routes\/stories\/\[id\]"\)>/
+      );
+      expect(declaration).toMatch(
+        /\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/index"\)>/
+      );
+    });
+
+    it("serves scan facts from `filesystem-routing/flags`: folded in build, true in serve", async () => {
+      const directory = root();
+      const load = (plugin: any, mode: string) =>
+        plugin.load.call(
+          { environment: { config: { root: directory }, mode, name: "client" } },
+          plugin.resolveId("filesystem-routing/flags")
+        );
+
+      const on = createPlugin(directory, { serverComponents: true });
+      expect(await load(on, "build")).toBe("export const serverRoutes = true;");
+      // the option off: no route is a server page, so the fact folds to false
+      const off = createPlugin(directory);
+      expect(await load(off, "build")).toBe("export const serverRoutes = false;");
+      // serve never folds: dev has no size to protect
+      expect(await load(off, "dev")).toBe("export const serverRoutes = true;");
+      // an unrelated id is not claimed
+      expect(off.resolveId("filesystem-routing/other")).toBeUndefined();
+    });
+  });
+
   describe("buildInputs", () => {
     const root = () =>
       createRouteTree({

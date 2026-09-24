@@ -46,6 +46,21 @@ function loadTsrxParser(src: string): ParseFn {
  * a compiler that already performs export analysis can provide it instead.
  */
 export function analyzeModule(src: string): StaticExportEntry[] {
+  return analyzeRouteModule(src).exports;
+}
+
+export interface RouteModuleAnalysis {
+  exports: StaticExportEntry[];
+  /**
+   * The directive prologue of the default export, when it is a function
+   * declared in this module (inline, or a top-level binding it names):
+   * `"use server"` marks a page whose component runs on the server.
+   */
+  defaultDirective?: string;
+}
+
+/** `analyzeModule` plus what the default export's function body declares. */
+export function analyzeRouteModule(src: string): RouteModuleAnalysis {
   const source = fs.readFileSync(src, "utf-8");
   let result: ReturnType<typeof parseSync>;
   if (src.endsWith(".tsrx")) {
@@ -64,9 +79,29 @@ export function analyzeModule(src: string): StaticExportEntry[] {
   const error = result.errors[0];
   if (error) throw new SyntaxError(`Failed to parse ${src}:\n${error.codeframe || error.message}`);
 
-  return result.module.staticExports.flatMap(({ entries }) =>
-    entries.filter(entry => !entry.isType && entry.exportName.kind !== "None")
-  );
+  return {
+    exports: result.module.staticExports.flatMap(({ entries }) =>
+      entries.filter(entry => !entry.isType && entry.exportName.kind !== "None")
+    ),
+    defaultDirective: defaultDirectiveOf(result.program.body as any[])
+  };
+}
+
+function defaultDirectiveOf(body: any[]): string | undefined {
+  let fn = body.find(node => node.type === "ExportDefaultDeclaration")?.declaration;
+  if (fn?.type === "Identifier") {
+    // `export default Story` — follow the name to a top-level function.
+    const name = fn.name;
+    fn = undefined;
+    for (const node of body) {
+      if (node.type === "FunctionDeclaration" && node.id?.name === name) fn = node;
+      else if (node.type === "VariableDeclaration")
+        for (const d of node.declarations) if (d.id?.name === name) fn = d.init;
+    }
+  }
+  if (!fn || !/Function(Declaration|Expression)$/.test(fn.type)) return;
+  const first = fn.body?.body?.[0];
+  return first?.type === "ExpressionStatement" ? first.directive : undefined;
 }
 
 export function getExportName(entry: StaticExportEntry) {
