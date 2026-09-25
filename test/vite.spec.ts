@@ -385,6 +385,21 @@ describe("fileRoutes vite plugin", () => {
       expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
     });
 
+    it("loads a server page's module whole on the server, so it is instantiated once", async () => {
+      const directory = root();
+      const code = await loadWith(
+        createPlugin(directory, { serverComponents: true }),
+        directory,
+        "ssr"
+      );
+
+      expect(code).toMatch(/import \* as routeModule\d from '[^']*\[id\]\.tsx';/);
+      expect(code).toMatch(/import { route as routeData\d } from '[^']*\[id\]\.tsx';/);
+      expect(code).not.toMatch(/\[id\]\.tsx\?pick=/);
+      // a client page on the server is still picked and split
+      expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
+    });
+
     it("is not a build input — the stub is inlined into the manifest", async () => {
       const plugin = createPlugin(root(), { serverComponents: true, buildInputs: "client" });
       const input: string[] = (await plugin.configEnvironment("client", {}, { command: "build" }))
