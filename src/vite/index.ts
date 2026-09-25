@@ -97,6 +97,17 @@ const isServerConsumer = (name: string, consumer: string | undefined) =>
   (consumer ?? (name === "client" ? "client" : "server")) === "server";
 
 /**
+ * The id a route module ref is loaded from: its source plus its picks. On the
+ * server a server page's module is loaded whole, because the server-function
+ * handler imports it whole too, and a second (picked) instance would register
+ * the page's server function twice.
+ */
+const toModuleId = (route: RouteManifestEntry, ref: ModuleRef, serverConsumer: boolean) =>
+  serverConsumer && route.server === true && ref.src === route.$component?.src
+    ? ref.src
+    : toPickId(ref.src, ref.pick);
+
+/**
  * The client's view of a shared server manifest: handler refs removed. A
  * client bundle can never invoke a request handler, but serializing its ref
  * would pull the handler module — and the server-only code it imports —
@@ -197,9 +208,6 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
     writeFileSync(file, contents);
   }
 
-  /** The id a route module ref is loaded from: its source plus its picks. */
-  const toModuleId = (ref: ModuleRef) => toPickId(ref.src, ref.pick);
-
   return [
     {
       name: "filesystem-routing",
@@ -252,8 +260,9 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         // A client environment on the shared router never serializes
         // handler refs (see load), so their modules must not become its
         // build entries either.
+        const serverConsumer = isServerConsumer(name, (_config as any).consumer);
         const routes =
-          options.routers?.[name] || isServerConsumer(name, (_config as any).consumer)
+          options.routers?.[name] || serverConsumer
             ? await router.getRoutes()
             : stripHandlerRefs(await router.getRoutes());
 
@@ -264,7 +273,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         for (const route of routes) {
           for (const [key, ref] of Object.entries(route)) {
             if (ref && key.startsWith("$") && !key.startsWith("$$") && !(ref as ModuleRef).eager) {
-              input.push(toModuleId(ref as ModuleRef));
+              input.push(toModuleId(route, ref as ModuleRef, serverConsumer));
             }
           }
         }
@@ -297,23 +306,21 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
         const environmentName = this.environment.name;
         const router = getRouter(environmentName);
         let routes = (router ? await router.getRoutes() : []) ?? [];
+        const serverConsumer = isServerConsumer(environmentName, this.environment.config.consumer);
         // The shared router serves every environment, so the split is this
         // adapter's job: client consumers get the manifest without handler
         // refs. An explicit per-environment router already IS the split —
         // serve whatever it emits.
-        if (
-          !options.routers?.[environmentName] &&
-          !isServerConsumer(environmentName, this.environment.config.consumer)
-        ) {
+        if (!options.routers?.[environmentName] && !serverConsumer) {
           routes = stripHandlerRefs(routes);
         }
 
-        const serializeEntry = (entry: unknown) =>
+        const serializeEntry = (entry: RouteManifestEntry) =>
           JSON.stringify(entry, (key, value) => {
             if (value === undefined) return undefined;
 
             if (key.startsWith("$$")) {
-              const buildId = toModuleId(value);
+              const buildId = toModuleId(entry, value, serverConsumer);
 
               const refs: Record<string, string> = {};
               for (const pick of value.pick) {
@@ -325,7 +332,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
                   .join(", ")} })$_`
               };
             } else if (key.startsWith("$")) {
-              const buildId = toModuleId(value);
+              const buildId = toModuleId(entry, value, serverConsumer);
               // With code splitting off — or a ref the convention marked
               // `eager` — the ref is delivered eagerly: a namespace import
               // (named imports would fail on the synthetic `$css` pick)
