@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PageFileSystemRouter } from "../src/convention.ts";
-import { fileRoutes, moduleId } from "../src/vite/index.ts";
+import { fileRoutes, moduleId, writeRouteTypes } from "../src/vite/index.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -41,6 +41,166 @@ function loadWith(plugin: any, root: string, environment = "client", consumer?: 
 function loadVirtualModule(root: string, environment = "client") {
   return loadWith(createPlugin(root), root, environment);
 }
+
+describe("writeRouteTypes", () => {
+  it("generates the same literal tuples as the plugin without running Vite", async () => {
+    const root = createRouteTree({
+      "(app).tsx": "export default props => <main>{props.children}</main>;",
+      "(app)/index.tsx": "export default () => <h1>Home</h1>;",
+      "(app)/users/[id].tsx": "export default () => <h1>User</h1>;",
+      "(app)/[...404].tsx": "export default () => <h1>Not found</h1>;",
+      "(app)/users/helper.ts": "export const helper = () => {};"
+    });
+
+    expect(await writeRouteTypes({ root })).toBe(true);
+    const declaration = fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8");
+    expect(declaration).toContain('declare module "virtual:file-routes"');
+    expect(declaration).toMatch(/const routes: readonly \[/);
+    expect(declaration).toMatch(/export const pageRoutes: readonly \[/);
+    expect(declaration).toContain('path: "/(app)"');
+    expect(declaration).toMatch(/children: readonly \[[\s\S]*path: "\/users\/:id"/);
+    expect(declaration).toContain('path: "/*404"');
+    expect(declaration).not.toContain("helper");
+
+    await createPlugin(root, { types: "plugin.d.ts" }).buildStart.call({});
+    expect(fs.readFileSync(path.join(root, "plugin.d.ts"), "utf-8")).toBe(declaration);
+  });
+
+  it.each([true, false])("matches plugin options with codeSplitting: %s", async codeSplitting => {
+    const root = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;",
+      "story.tsx": 'export default async function Story() { "use server"; return () => null; }',
+      "api.ts": "export const GET = () => new Response('ok');",
+      "post.md": "# Post",
+      "excluded.jsx": "export default () => <h1>Excluded</h1>;"
+    });
+    const options = {
+      dir: "src/routes",
+      extensions: ["ts", "tsx", "md"],
+      httpMethods: ["GET"],
+      serverComponents: true,
+      moduleId: "virtual:custom-routes",
+      codeSplitting
+    };
+    await writeRouteTypes({ root, ...options, file: "types/routes.d.ts" });
+    const declaration = fs.readFileSync(path.join(root, "types/routes.d.ts"), "utf-8");
+    expect(declaration).toContain('declare module "virtual:custom-routes"');
+    expect(declaration).toMatch(/server: true;\s*\n\s*\$component: FileRouteEagerRef/);
+    expect(declaration).toContain("$GET:");
+    expect(declaration).not.toContain("$HEAD:");
+    expect(declaration).not.toContain("excluded");
+    expect(declaration).toContain('typeof import("../src/routes/index")');
+    expect(declaration).toContain(
+      `$component: FileRoute${codeSplitting ? "Lazy" : "Eager"}Ref<typeof import("../src/routes/index")>`
+    );
+
+    await createPlugin(root, { ...options, types: "types/plugin.d.ts" }).buildStart.call({});
+    expect(fs.readFileSync(path.join(root, "types/plugin.d.ts"), "utf-8")).toBe(declaration);
+  });
+
+  it("uses the current directory as the default root", async () => {
+    const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    try {
+      await writeRouteTypes();
+      expect(fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8")).toContain('path: "/"');
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it("uses a custom router instead of the scan options", async () => {
+    const root = createRouteTree({ "index.tsx": "export default () => <h1>Home</h1>;" });
+    const router = new PageFileSystemRouter({
+      dir: path.join(root, "src/routes"),
+      extensions: ["tsx"],
+      toPath: () => "/custom",
+      components: false
+    });
+    const file = path.join(root, "types/custom.d.ts");
+
+    await writeRouteTypes({ router, file, dir: "unused", extensions: [] });
+    const declaration = fs.readFileSync(file, "utf-8");
+    expect(declaration).toContain('path: "/custom"');
+    expect(declaration).not.toContain("$component:");
+  });
+
+  it("accepts a custom directory and convention", async () => {
+    const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+    await writeRouteTypes({
+      root,
+      dir: "src",
+      toPath: file => `/custom${file}`,
+      toRoute: (src, router) => ({ path: `${router.toPath(src)}/from-to-route`, page: true })
+    });
+    expect(fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8")).toContain(
+      'path: "/custom/routes/index/from-to-route"'
+    );
+  });
+
+  it("forwards components: false", async () => {
+    const root = createRouteTree({ "index.tsx": "export default () => <h1>Home</h1>;" });
+    await writeRouteTypes({ root, components: false });
+    const declaration = fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8");
+    expect(declaration).toContain('path: "/"');
+    expect(declaration).not.toContain("$component:");
+  });
+
+  it("reuses a supplied router's manifest and rescans without one", async () => {
+    const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+    const router = new PageFileSystemRouter({
+      dir: path.join(root, "src/routes"),
+      extensions: ["ts"]
+    });
+    await router.getRoutes();
+    expect(await writeRouteTypes({ root, router })).toBe(true);
+    const file = path.join(root, "file-routes.d.ts");
+    const declaration = fs.readFileSync(file, "utf-8");
+    fs.utimesSync(file, new Date(0), new Date(0));
+    const modified = fs.statSync(file).mtimeMs;
+
+    fs.writeFileSync(path.join(root, "src/routes/about.ts"), "export default () => 'about';");
+    expect(await writeRouteTypes({ root, router })).toBe(false);
+    expect(fs.readFileSync(file, "utf-8")).toBe(declaration);
+    expect(fs.statSync(file).mtimeMs).toBe(modified);
+
+    expect(await writeRouteTypes({ root })).toBe(true);
+    expect(fs.readFileSync(file, "utf-8")).toContain('path: "/about"');
+  });
+
+  it("leaves unchanged files untouched and rescans on the next call", async () => {
+    const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+    const file = path.join(root, "file-routes.d.ts");
+    expect(await writeRouteTypes({ root })).toBe(true);
+    fs.utimesSync(file, new Date(0), new Date(0));
+    const first = fs.statSync(file).mtimeMs;
+
+    expect(await writeRouteTypes({ root })).toBe(false);
+    expect(fs.statSync(file).mtimeMs).toBe(first);
+
+    fs.renameSync(path.join(root, "src/routes/index.ts"), path.join(root, "src/routes/about.ts"));
+    expect(await writeRouteTypes({ root })).toBe(true);
+    const declaration = fs.readFileSync(file, "utf-8");
+    expect(declaration).toContain('path: "/about"');
+    expect(declaration).not.toContain('path: "/"');
+    expect(fs.statSync(file).mtimeMs).not.toBe(first);
+  });
+
+  it("writes empty tuples when no route modules are found", async () => {
+    const root = createRouteTree({ "helper.ts": "export const helper = () => {};" });
+    await writeRouteTypes({ root });
+    const declaration = fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8");
+    expect(declaration).toContain("const routes: readonly [];");
+    expect(declaration).toContain("export const pageRoutes: readonly [];");
+  });
+
+  it("rejects when the declaration cannot be written", async () => {
+    const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+    await expect(
+      writeRouteTypes({ root, file: "src/routes/index.ts/types.d.ts" })
+    ).rejects.toThrow();
+  });
+});
 
 describe("fileRoutes vite plugin", () => {
   it("serializes the manifest into a virtual module", async () => {
@@ -130,6 +290,26 @@ describe("fileRoutes vite plugin", () => {
   });
 
   describe("types", () => {
+    it("uses the client router for declarations with per-environment routers", async () => {
+      const root = createRouteTree({ "index.ts": "export default () => 'home';" });
+      const router = (routePath: string) =>
+        new PageFileSystemRouter({
+          dir: path.join(root, "src/routes"),
+          extensions: ["ts"],
+          toPath: () => routePath
+        });
+      const plugin = createPlugin(root, {
+        types: true,
+        router: router("/default"),
+        routers: { client: router("/client"), ssr: router("/server") }
+      });
+      await plugin.buildStart.call({});
+      const declaration = fs.readFileSync(path.join(root, "file-routes.d.ts"), "utf-8");
+      expect(declaration).toContain('path: "/client"');
+      expect(declaration).not.toContain('path: "/default"');
+      expect(declaration).not.toContain('path: "/server"');
+    });
+
     it("declares the manifest as a literal tuple", async () => {
       const root = createRouteTree({
         "(app).tsx": "export default props => <main>{props.children}</main>;",

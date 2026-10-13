@@ -82,6 +82,79 @@ export interface FileRoutesOptions extends Pick<
   types?: boolean | string;
 }
 
+export interface WriteRouteTypesOptions extends Pick<
+  FileRoutesOptions,
+  | "extensions"
+  | "components"
+  | "httpMethods"
+  | "serverComponents"
+  | "toPath"
+  | "toRoute"
+  | "moduleId"
+  | "codeSplitting"
+> {
+  /** Base directory for `dir` and `file`. Defaults to the current working directory. */
+  root?: string;
+  /** Route directory, relative to `root`. Defaults to `src/routes`. */
+  dir?: string;
+  /** Output file, relative to `root`. Defaults to `file-routes.d.ts`. */
+  file?: string;
+  /**
+   * Use this router's current manifest instead of scanning with the convention
+   * options. For per-environment configurations, pass the plugin's client router.
+   */
+  router?: BaseFileSystemRouter;
+}
+
+function createDefaultRouter(
+  root: string,
+  options: Pick<
+    FileRoutesOptions,
+    "dir" | "extensions" | "components" | "httpMethods" | "serverComponents" | "toPath" | "toRoute"
+  >
+) {
+  return new PageFileSystemRouter({
+    dir: normalizePath(resolve(root, options.dir ?? "src/routes")),
+    extensions: options.extensions ?? DEFAULT_EXTENSIONS,
+    components: options.components,
+    httpMethods: options.httpMethods,
+    serverComponents: options.serverComponents,
+    toPath: options.toPath,
+    toRoute: options.toRoute
+  });
+}
+
+/**
+ * Write the virtual module's declaration without starting Vite. Returns
+ * `true` when the file was written, or `false` when its contents were unchanged.
+ */
+export async function writeRouteTypes(options: WriteRouteTypesOptions = {}): Promise<boolean> {
+  const root = options.root ?? process.cwd();
+  const file = resolve(root, options.file ?? "file-routes.d.ts");
+  const router = options.router ?? createDefaultRouter(root, options);
+  const routes = (await router.getRoutes()) ?? [];
+  const contents = serializeTypes(
+    options.moduleId ?? moduleId,
+    routes,
+    buildRouteTree(routes.filter(route => route.page)),
+    dirname(file),
+    options.codeSplitting !== false
+  );
+
+  // Only touch the file when it actually changes: the plugin calls this from
+  // every environment and on each route change, and a rewrite would churn the
+  // watcher for no reason.
+  let previous;
+  try {
+    previous = readFileSync(file, "utf-8");
+  } catch {}
+  if (previous === contents) return false;
+
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, contents);
+  return true;
+}
+
 /**
  * Handler refs are the `$`-prefixed all-uppercase keys the convention emits
  * (`$GET`, `$POST`, ...). They exist for server dispatch only.
@@ -176,25 +249,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
     const router = typesRouter();
     if (!file || !router) return;
 
-    const routes = (await router.getRoutes()) ?? [];
-    const contents = serializeTypes(
-      virtualId,
-      routes,
-      buildRouteTree(routes.filter(route => route.page)),
-      dirname(file),
-      codeSplitting
-    );
-
-    // Only touch the file when it actually changes: every environment calls
-    // this, and rewriting it would churn the watcher for no reason.
-    let previous;
-    try {
-      previous = readFileSync(file, "utf-8");
-    } catch {}
-    if (previous === contents) return;
-
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, contents);
+    await writeRouteTypes({ router, file, moduleId: virtualId, codeSplitting });
   }
 
   /** The id a route module ref is loaded from: its source plus its picks. */
@@ -225,15 +280,7 @@ export function fileRoutes(options: FileRoutesOptions = {}): PluginOption[] {
       configResolved(config) {
         root = config.root;
         if (!defaultRouter) {
-          defaultRouter = new PageFileSystemRouter({
-            dir: normalizePath(resolve(config.root, options.dir ?? "src/routes")),
-            extensions: options.extensions ?? DEFAULT_EXTENSIONS,
-            components: options.components,
-            httpMethods: options.httpMethods,
-            serverComponents: options.serverComponents,
-            toPath: options.toPath,
-            toRoute: options.toRoute
-          });
+          defaultRouter = createDefaultRouter(config.root, options);
         }
       },
       async buildStart() {

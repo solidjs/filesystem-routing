@@ -322,6 +322,23 @@ literal tuple, regenerating it as routes come and go:
 fileRoutes({ types: "file-routes.d.ts" })
 ```
 
+To write the same declaration before a standalone typecheck, without starting
+Vite, call `writeRouteTypes` from a Node script (an ES module for the
+top-level `await`):
+
+```js
+import { writeRouteTypes } from "filesystem-routing/vite";
+
+await writeRouteTypes({ dir: "src/routes", file: "file-routes.d.ts" });
+```
+
+It takes the plugin's `dir`, `extensions`, convention options, `moduleId` and
+`codeSplitting`; pass the same values so both write the same file. `dir` and
+`file` resolve against `root`, which defaults to the current working directory.
+Pass `router` to use an existing router's current manifest; otherwise, each
+call scans the directory again. It writes only when the contents change and
+resolves to whether it wrote.
+
 Reference the generated file instead of `filesystem-routing/types` — it is
 self-contained, and two declarations of the same module conflict. Emission
 adapters then have to preserve the tuple on the way through, which means a
