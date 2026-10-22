@@ -55,18 +55,21 @@ const REF_TYPES = `  /** A code-split ref: the delivery adapter emits it as a dy
 const TYPED_MODULE = /\.([mc]?[jt]sx?)$/;
 
 /**
- * Types a ref by the module it points at, so a page's `default` really is the
- * component and a `route` export really is the config the module declares —
- * which is what saves an emission adapter from casting either one. Modules
- * TypeScript cannot resolve (`.md`, `.mdx`) fall back to the generic ref.
+ * Types a ref by its picked exports, keeping the module's `default` and
+ * `route` types so an emission adapter can read either without a cast.
+ * Modules TypeScript cannot resolve (`.md`, `.mdx`) fall back to the generic ref.
  */
 function refType(ref: ModuleRef, kind: "lazy" | "eager", from: string): string {
   const name = kind === "eager" ? "FileRouteEagerRef" : "FileRouteLazyRef";
   if (!TYPED_MODULE.test(ref.src)) return name;
 
+  const picks = ref.pick.filter(pick => pick !== "$css").map(pick => JSON.stringify(pick));
+  if (!picks.length) return name;
+
   let specifier = normalizePath(relative(from, ref.src)).replace(TYPED_MODULE, "");
   if (!specifier.startsWith(".")) specifier = `./${specifier}`;
-  return `${name}<typeof import(${JSON.stringify(specifier)})>`;
+  const moduleType = `typeof import(${JSON.stringify(specifier)})`;
+  return `${name}<Pick<${moduleType}, Extract<${picks.join(" | ")}, keyof ${moduleType}>>>`;
 }
 
 const isLazyRefKey = (key: string) => key.startsWith("$") && !key.startsWith("$$");

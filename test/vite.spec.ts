@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PageFileSystemRouter } from "../src/convention.ts";
@@ -40,6 +41,23 @@ function loadWith(plugin: any, root: string, environment = "client", consumer?: 
 
 function loadVirtualModule(root: string, environment = "client") {
   return loadWith(createPlugin(root), root, environment);
+}
+
+function checkTypes(root: string, source: string, options: ts.CompilerOptions = {}) {
+  const file = path.join(root, "consumer.ts");
+  fs.writeFileSync(file, source);
+  const program = ts.createProgram([path.join(root, "generated.d.ts"), file], {
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true,
+    noEmit: true,
+    types: [],
+    ...options
+  });
+  return ts
+    .getPreEmitDiagnostics(program)
+    .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
 }
 
 describe("fileRoutes vite plugin", () => {
@@ -130,6 +148,174 @@ describe("fileRoutes vite plugin", () => {
   });
 
   describe("types", () => {
+    it.each([
+      { codeSplitting: true, serverComponents: false },
+      { codeSplitting: false, serverComponents: false },
+      { codeSplitting: true, serverComponents: true }
+    ])("types only picked exports with %o", async options => {
+      const root = createRouteTree({
+        "index.ts": `
+          export const route = { info: { title: "Home" } };
+          export const GET = () => new Response("ok");
+          export const POST = () => new Response("created");
+          export default function Home() {
+            ${options.serverComponents ? '"use server";' : ""}
+            return null;
+          }
+        `
+      });
+      const plugin = createPlugin(root, { ...options, types: "generated.d.ts", httpMethods: true });
+      await plugin.buildStart.call({});
+      const componentMethod =
+        options.codeSplitting && !options.serverComponents ? "import" : "require";
+      const componentResult =
+        componentMethod === "import"
+          ? "Promise.resolve({ default: render })"
+          : "({ default: render })";
+      const handlerMethod = options.codeSplitting ? "import" : "require";
+
+      expect(
+        checkTypes(
+          root,
+          `
+        import routes, { pageRoutes } from "virtual:file-routes";
+        const entry = routes[0];
+        const render = () => null;
+        entry.$component.${componentMethod} = () => ${componentResult};
+        pageRoutes[0].$component.${componentMethod} = () => ${componentResult};
+        entry.$$route.require = () => ({ route: { info: { title: "Home" } } });
+        const component = await entry.$component.${componentMethod}();
+        const config = entry.$$route.require();
+        const get = await entry.$GET.${handlerMethod}();
+        const head = await entry.$HEAD.${handlerMethod}();
+        const result: null = component.default();
+        const title: string = config.route.info.title;
+        const response: Response = head.GET();
+        // @ts-expect-error route config is delivered through its own ref
+        component.route;
+        // @ts-expect-error component refs omit HTTP handlers
+        component.GET;
+        // @ts-expect-error route config refs omit the page component
+        config.default;
+        // @ts-expect-error route config refs omit HTTP handlers
+        config.GET;
+        // @ts-expect-error GET refs omit other handlers
+        get.POST;
+        // @ts-expect-error the HEAD alias picks GET, not HEAD
+        head.HEAD;
+        // @ts-expect-error handler refs omit the page component
+        head.default;
+        // @ts-expect-error the tree view also omits unpicked exports
+        pageRoutes[0].$$route.require().default;
+      `
+        )
+      ).toEqual([]);
+    });
+
+    it.each([
+      { extension: "js", codeSplitting: true },
+      { extension: "jsx", codeSplitting: true },
+      { extension: "js", codeSplitting: false },
+      { extension: "jsx", codeSplitting: false }
+    ])(
+      "keeps picked exports from untyped JavaScript with %o",
+      async ({ extension, codeSplitting }) => {
+        const root = createRouteTree({
+          [`index.${extension}`]: `
+          export const route = { info: { title: "Home" } };
+          export default () => null;
+        `
+        });
+        const plugin = createPlugin(root, { types: "generated.d.ts", codeSplitting });
+        await plugin.buildStart.call({});
+        const method = codeSplitting ? "import" : "require";
+
+        expect(
+          checkTypes(
+            root,
+            `
+        import routes, { pageRoutes } from "virtual:file-routes";
+        const component = await routes[0].$component.${method}();
+        const config = routes[0].$$route.require();
+        component.default();
+        config.route.info.title;
+        (await pageRoutes[0].$component.${method}()).default();
+        pageRoutes[0].$$route.require().route.info.title;
+        type IsAny<T> = 0 extends (1 & T) ? true : false;
+        const defaultIsAny: IsAny<typeof component.default> = true;
+        const routeIsAny: IsAny<typeof config.route> = true;
+        // @ts-expect-error component refs exclude the route config even without source types
+        component.route;
+        // @ts-expect-error route config refs exclude the component even without source types
+        config.default;
+      `,
+            { allowJs: false, skipLibCheck: true }
+          )
+        ).toEqual([]);
+      }
+    );
+
+    it("keeps multiple picked exports without requiring synthetic or missing names", async () => {
+      const root = createRouteTree({
+        "index.ts": `
+          export const helper = 42;
+          export const route = {};
+          export default () => null;
+        `
+      });
+      const plugin = createPlugin(root, {
+        types: "generated.d.ts",
+        toRoute: src => ({
+          path: "/",
+          page: true,
+          $component: { src, pick: ["default", "helper", "missing", "$css"] }
+        })
+      });
+      await plugin.buildStart.call({});
+
+      expect(
+        checkTypes(
+          root,
+          `
+        import routes from "virtual:file-routes";
+        const component = await routes[0].$component.import();
+        const helper: 42 = component.helper;
+        const result: null = component.default();
+        // @ts-expect-error the module does not export the synthetic CSS pick
+        component.$css;
+        // @ts-expect-error absent picked names do not become exports
+        component.missing;
+        // @ts-expect-error unpicked exports are excluded
+        component.route;
+      `
+        )
+      ).toEqual([]);
+    });
+
+    it.each([true, false])(
+      "uses generic refs for empty or CSS-only picks (codeSplitting: %s)",
+      async codeSplitting => {
+        const root = createRouteTree({ "index.ts": "export default () => null;" });
+        const plugin = createPlugin(root, {
+          types: "generated.d.ts",
+          codeSplitting,
+          toRoute: src => ({
+            path: "/",
+            page: true,
+            $component: { src, pick: ["$css"] },
+            $$route: { src, pick: [] }
+          })
+        });
+        await plugin.buildStart.call({});
+        const declaration = fs.readFileSync(path.join(root, "generated.d.ts"), "utf-8");
+
+        expect(declaration).toContain(
+          `$component: ${codeSplitting ? "FileRouteLazyRef" : "FileRouteEagerRef"};`
+        );
+        expect(declaration).toContain("$$route: FileRouteEagerRef;");
+      }
+    );
+
     it("declares the manifest as a literal tuple", async () => {
       const root = createRouteTree({
         "(app).tsx": "export default props => <main>{props.children}</main>;",
@@ -154,14 +340,13 @@ describe("fileRoutes vite plugin", () => {
       expect(declaration).toMatch(/children: readonly \[[\s\S]*path: "\/blog\/:id"/);
       // absent refs stay readable rather than vanishing from the type
       expect(declaration).toContain("$$route?: undefined");
-      // refs are typed by the module they point at, so an adapter reads a
-      // page's real default export and a route module's real config
+      // refs retain the original types of their picked exports
       expect(declaration).toMatch(
-        /\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/\(app\)\/blog\/\[id\]"\)>/
+        /\$component: FileRouteLazyRef<Pick<typeof import\("\.\/src\/routes\/\(app\)\/blog\/\[id\]"\),/
       );
-      expect(declaration).toMatch(/\$\$route: FileRouteEagerRef<typeof import\(/);
+      expect(declaration).toMatch(/\$\$route: FileRouteEagerRef<Pick<typeof import\(/);
       // handler refs are typed too, and a handler-only module is not a page
-      expect(declaration).toMatch(/\$GET: FileRouteLazyRef<typeof import\(/);
+      expect(declaration).toMatch(/\$GET: FileRouteLazyRef<Pick<typeof import\(/);
       expect(declaration).toMatch(/path: "\/api\/health";\s*\n\s*page: false/);
     });
 
@@ -180,7 +365,7 @@ describe("fileRoutes vite plugin", () => {
 
       expect(declaration).toMatch(/path: "\/post";[\s\S]*?\$component: FileRouteLazyRef;/);
       expect(declaration).toMatch(
-        /\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/index"\)>/
+        /\$component: FileRouteLazyRef<Pick<typeof import\("\.\/src\/routes\/index"\),/
       );
     });
 
@@ -354,7 +539,7 @@ describe("fileRoutes vite plugin", () => {
       const declaration = fs.readFileSync(path.join(directory, "generated.d.ts"), "utf-8");
 
       expect(declaration).toMatch(
-        /\$component: FileRouteEagerRef<typeof import\("\.\/src\/routes\/index"\)>/
+        /\$component: FileRouteEagerRef<Pick<typeof import\("\.\/src\/routes\/index"\),/
       );
       // no delivered ref is typed lazy (the interface itself stays declared)
       expect(declaration).not.toMatch(/\$\w+: FileRouteLazyRef/);
@@ -385,6 +570,21 @@ describe("fileRoutes vite plugin", () => {
       expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
     });
 
+    it("loads a server page's module whole on the server, so it is instantiated once", async () => {
+      const directory = root();
+      const code = await loadWith(
+        createPlugin(directory, { serverComponents: true }),
+        directory,
+        "ssr"
+      );
+
+      expect(code).toMatch(/import \* as routeModule\d from '[^']*\[id\]\.tsx';/);
+      expect(code).toMatch(/import { route as routeData\d } from '[^']*\[id\]\.tsx';/);
+      expect(code).not.toMatch(/\[id\]\.tsx\?pick=/);
+      // a client page on the server is still picked and split
+      expect(code).toMatch(/import\('[^']*index\.tsx\?pick=default&pick=\$css&lang\.tsx'\)/);
+    });
+
     it("is not a build input — the stub is inlined into the manifest", async () => {
       const plugin = createPlugin(root(), { serverComponents: true, buildInputs: "client" });
       const input: string[] = (await plugin.configEnvironment("client", {}, { command: "build" }))
@@ -399,10 +599,10 @@ describe("fileRoutes vite plugin", () => {
       await plugin.buildStart.call({});
       const declaration = fs.readFileSync(path.join(directory, "generated.d.ts"), "utf-8");
       expect(declaration).toMatch(
-        /server: true;\s*\n\s*\$component: FileRouteEagerRef<typeof import\("\.\/src\/routes\/stories\/\[id\]"\)>/
+        /server: true;\s*\n\s*\$component: FileRouteEagerRef<Pick<typeof import\("\.\/src\/routes\/stories\/\[id\]"\),/
       );
       expect(declaration).toMatch(
-        /\$component: FileRouteLazyRef<typeof import\("\.\/src\/routes\/index"\)>/
+        /\$component: FileRouteLazyRef<Pick<typeof import\("\.\/src\/routes\/index"\),/
       );
     });
 

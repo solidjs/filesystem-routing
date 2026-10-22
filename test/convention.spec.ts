@@ -374,6 +374,56 @@ describe("PageFileSystemRouter", () => {
       "/zebra"
     ]);
   });
+
+  it("keeps scan order when the watcher updates, re-adds or adds routes", async () => {
+    const dir = createRouteTree({
+      "index.tsx": "export default () => <h1>Home</h1>;",
+      "about.tsx": "export default () => <h1>About</h1>;",
+      "contact.tsx": "export default () => <h1>Contact</h1>;",
+      "zebra.tsx": "export default () => <h1>Z</h1>;"
+    });
+    const router = new PageFileSystemRouter({ dir, extensions: ["tsx"] });
+    const paths = () => router.routes.map(route => route.path);
+    const scan = async () =>
+      (await new PageFileSystemRouter({ dir, extensions: ["tsx"] }).getRoutes()).map(
+        route => route.path
+      );
+    await router.getRoutes();
+    const scanned = await scan();
+
+    // An edited file must not move to the end of the manifest.
+    await router.updateRoute(path.join(dir, "about.tsx"));
+    expect(paths()).toEqual(scanned);
+
+    // A file removed and created again returns to its scan position.
+    router.removeRoute(path.join(dir, "about.tsx"));
+    await router.addRoute(path.join(dir, "about.tsx"));
+    expect(paths()).toEqual(scanned);
+
+    // New files land where a fresh scan puts them, in the middle or at the end.
+    for (const name of ["blog.tsx", "zzz.tsx"]) {
+      fs.writeFileSync(path.join(dir, name), "export default () => null;");
+      await router.addRoute(path.join(dir, name));
+      expect(paths()).toEqual(await scan());
+    }
+  });
+
+  it("keeps scan order when two files map to the same path", async () => {
+    const dir = createRouteTree({
+      "about-us.tsx": "export default () => null;",
+      "about.mdx": "# About",
+      "about.tsx": "export default () => null;"
+    });
+    const extensions = ["tsx", "mdx"];
+    const router = new PageFileSystemRouter({ dir, extensions });
+    await router.getRoutes();
+
+    fs.writeFileSync(path.join(dir, "about.q.tsx"), "export default () => null;");
+    await router.addRoute(path.join(dir, "about.q.tsx"));
+
+    const fresh = await new PageFileSystemRouter({ dir, extensions }).getRoutes();
+    expect(router.routes.map(route => route.path)).toEqual(fresh.map(route => route.path));
+  });
 });
 
 describe("BaseFileSystemRouter", () => {

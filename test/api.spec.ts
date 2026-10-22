@@ -154,6 +154,22 @@ describe("createAPIHandler", () => {
     expect(notFound.status).toBe(404);
   });
 
+  it("falls through on HEAD when the GET answering it declines", async () => {
+    const asPage = [
+      { path: "/about", page: true, $component: {}, $GET: ref({ GET: () => undefined }) }
+    ];
+    const head = await dispatch(asPage, new Request("http://test/about", { method: "HEAD" }))
+      .response;
+    expect(await head.text()).toBe("rendered");
+
+    const handlerOnly = [{ path: "/api/thing", $GET: ref({ GET: () => undefined }) }];
+    const notFound = await dispatch(
+      handlerOnly,
+      new Request("http://test/api/thing", { method: "HEAD" })
+    ).response;
+    expect(notFound.status).toBe(404);
+  });
+
   it("strips the configured base before matching", async () => {
     const routes = [{ path: "/api/thing", $GET: ref({ GET: () => new Response("ok") }) }];
     const { response } = dispatch(routes, new Request("http://test/app/api/thing"), {
@@ -182,5 +198,41 @@ describe("createAPIHandler", () => {
     await expect(createAPIHandler(routes)(event.request, next)).rejects.toThrow(
       /request-event scope/
     );
+  });
+
+  it("takes the request event in place of the request, as event-first chains pass it", async () => {
+    const routes = [
+      {
+        path: "/api/posts/:id",
+        $GET: ref({ GET: event => Response.json({ id: event.params!.id, user: event.user }) })
+      }
+    ];
+    const event = { request: new Request("http://test/api/posts/42"), user: "passed" };
+
+    const response = await createAPIHandler(routes)(event, next);
+    expect(await response.json()).toEqual({ id: "42", user: "passed" });
+    expect((event as APIEvent).params).toEqual({ id: "42" });
+
+    const richer = { request: event.request, user: "richer" };
+    const viaOption = await createAPIHandler(routes, { getEvent: () => richer })(event, next);
+    expect(await viaOption.json()).toEqual({ id: "42", user: "richer" });
+  });
+
+  it("advances an event-first chain with a bare next()", async () => {
+    const routes = [
+      { path: "/about", page: true, $component: {}, $GET: ref({ GET: () => undefined }) }
+    ];
+    const handler = createAPIHandler(routes);
+
+    const unmatched = vi.fn(next);
+    await handler({ request: new Request("http://test/other") }, unmatched);
+    expect(unmatched).toHaveBeenCalledOnce();
+    expect(unmatched).toHaveBeenCalledWith();
+
+    const declined = vi.fn(next);
+    const response = await handler({ request: new Request("http://test/about") }, declined);
+    expect(declined).toHaveBeenCalledOnce();
+    expect(declined).toHaveBeenCalledWith();
+    expect(await response.text()).toBe("rendered");
   });
 });

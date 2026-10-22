@@ -165,7 +165,8 @@ pages get:
 
 Dispatch ships as fetch-style middleware — `filesystem-routing/api` matches
 requests against the manifest's handler refs and composes into any
-`(request, next)` chain, an SSR handler's middleware option included:
+`(request, next)` or `(event, next)` chain, an SSR handler's middleware option
+(`@solidjs/vite-plugin`'s `start.middleware`) included:
 
 ```ts
 // src/middleware.ts
@@ -175,7 +176,8 @@ import { createAPIHandler } from "filesystem-routing/api";
 export default [createAPIHandler(routes)];
 ```
 
-Handlers receive the request event of the surrounding scope (the storage
+Handlers receive the event the chain passes in or, in a `(request, next)`
+chain, the request event of the surrounding scope (the storage
 `provideRequestEvent` establishes — pass `getEvent` to dispatch outside
 one), with the matched `params` written onto it. Unmatched requests (no
 route, or no handler for the method) advance the chain; `HEAD` falls back

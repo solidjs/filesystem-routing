@@ -3,9 +3,9 @@ import { createRouter } from "radix3";
 /**
  * The API dispatch adapter: matches requests against the flat manifest's
  * handler refs (`$GET`, `$POST`, …) and serves them as fetch-style
- * middleware, so API routes compose into any `(request, next)` chain — an
- * SSR handler's middleware option, a framework's request pipeline — with no
- * bundler or server involvement.
+ * middleware, so API routes compose into any `(request, next)` or
+ * `(event, next)` chain — an SSR handler's middleware option, a framework's
+ * request pipeline — with no bundler or server involvement.
  *
  * Ported from SolidStart's `server/routes.ts` (the radix3 matcher) and the
  * method dispatch in its `server/handler.ts`.
@@ -134,7 +134,8 @@ export interface APIHandlerOptions {
   base?: string;
   /**
    * How the adapter reaches the request event it hands to handlers. Defaults
-   * to the core request-event scope (the storage `provideRequestEvent`
+   * to the event the chain passes in or, when it passes a bare `Request`, to
+   * the core request-event scope (the storage `provideRequestEvent`
    * establishes), which is where a middleware chain runs — override it when
    * dispatching outside one, or to hand handlers a richer event.
    */
@@ -147,8 +148,8 @@ function getScopedEvent(): APIEvent {
   const event = (globalThis as Record<symbol, any>)[RequestContext]?.getStore();
   if (!event) {
     throw new Error(
-      "API route dispatched outside a request-event scope. Compose the handler " +
-        "inside `provideRequestEvent` (any `ssr.middleware`-style chain already is), " +
+      "API route dispatched outside a request-event scope. Pass the request event " +
+        "instead of the request, compose the handler inside `provideRequestEvent`, " +
         "or pass `getEvent`."
     );
   }
@@ -171,11 +172,15 @@ function toResponse(result: unknown): Response {
  * export default [createAPIHandler(routes)];
  * ```
  *
+ * The first argument is the request or a request event carrying it
+ * (`event.request`), so the handler fits `(request, next)` and
+ * `(event, next)` chains alike; it calls `next()` without arguments.
+ *
  * Dispatch preserves SolidStart's semantics: unmatched requests (no route,
  * or no handler for the method) advance the chain; `HEAD` falls back to the
  * `GET` handler; matched params are written to `event.params` before the
  * handler runs. A handler returning `undefined` declines the request —
- * allowed for `GET` only (anything else throws): a page module falls
+ * allowed for `GET` and `HEAD` only (anything else throws): a page module falls
  * through to the chain (its component renders instead), a handler-only
  * module answers 404.
  */
@@ -183,13 +188,13 @@ export function createAPIHandler(
   routes: readonly FileRouteHandlers[],
   options: APIHandlerOptions = {}
 ): (
-  request: Request,
+  input: Request | { request: Request },
   next: (request?: Request) => Response | Promise<Response>
 ) => Promise<Response> {
   const match = createAPIMatcher(routes);
-  const getEvent = options.getEvent ?? getScopedEvent;
 
-  return async (request, next) => {
+  return async (input, next) => {
+    const request = "request" in input ? input.request : input;
     const url = new URL(request.url);
     const matched = match(stripPathBase(url.pathname, options.base ?? "/"), request.method);
     if (!matched) return next();
@@ -199,12 +204,13 @@ export function createAPIHandler(
     const fn = request.method === "HEAD" ? mod.HEAD || mod.GET : mod[request.method];
     if (typeof fn !== "function") return next();
 
-    const event = getEvent();
+    const event =
+      options.getEvent?.() ?? ("request" in input ? (input as APIEvent) : getScopedEvent());
     event.params = matched.params || {};
     const result = await fn(event);
 
     if (result !== undefined) return toResponse(result);
-    if (request.method !== "GET") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
       throw new Error(
         `API handler for ${request.method} "${request.url}" did not return a response.`
       );
