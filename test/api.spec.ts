@@ -154,6 +154,22 @@ describe("createAPIHandler", () => {
     expect(notFound.status).toBe(404);
   });
 
+  it("falls through on HEAD when the GET answering it declines", async () => {
+    const asPage = [
+      { path: "/about", page: true, $component: {}, $GET: ref({ GET: () => undefined }) }
+    ];
+    const head = await dispatch(asPage, new Request("http://test/about", { method: "HEAD" }))
+      .response;
+    expect(await head.text()).toBe("rendered");
+
+    const handlerOnly = [{ path: "/api/thing", $GET: ref({ GET: () => undefined }) }];
+    const notFound = await dispatch(
+      handlerOnly,
+      new Request("http://test/api/thing", { method: "HEAD" })
+    ).response;
+    expect(notFound.status).toBe(404);
+  });
+
   it("strips the configured base before matching", async () => {
     const routes = [{ path: "/api/thing", $GET: ref({ GET: () => new Response("ok") }) }];
     const { response } = dispatch(routes, new Request("http://test/app/api/thing"), {

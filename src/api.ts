@@ -175,7 +175,7 @@ function toResponse(result: unknown): Response {
  * or no handler for the method) advance the chain; `HEAD` falls back to the
  * `GET` handler; matched params are written to `event.params` before the
  * handler runs. A handler returning `undefined` declines the request —
- * allowed for `GET` only (anything else throws): a page module falls
+ * allowed for `GET` and `HEAD` only (anything else throws): a page module falls
  * through to the chain (its component renders instead), a handler-only
  * module answers 404.
  */
@@ -204,7 +204,7 @@ export function createAPIHandler(
     const result = await fn(event);
 
     if (result !== undefined) return toResponse(result);
-    if (request.method !== "GET") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
       throw new Error(
         `API handler for ${request.method} "${request.url}" did not return a response.`
       );
