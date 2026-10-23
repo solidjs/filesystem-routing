@@ -45,8 +45,12 @@ export function buildRouteTree(entries: readonly RouteManifestEntry[]): RouteTre
     );
   }
 
+  // Ties break by UTF-16 code unit, as the scan sorts files, not by
+  // `localeCompare`: the generated output must not depend on the machine's locale.
   return [...entries]
-    .sort((a, b) => (a.path.length - b.path.length) || a.path.localeCompare(b.path))
+    .sort(
+      (a, b) => a.path.length - b.path.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+    )
     .reduce((routes: RouteTreeEntry[], route) => {
       processRoute(routes, route, route.path);
       return routes;

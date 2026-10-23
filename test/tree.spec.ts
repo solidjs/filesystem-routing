@@ -13,6 +13,12 @@ describe("stripRouteGroups", () => {
 });
 
 describe("buildRouteTree", () => {
+  it("orders siblings of equal length by code unit, not by locale", () => {
+    const tree = buildRouteTree([entry("/b"), entry("/a"), entry("/B")]);
+    // localeCompare would give /a /b /B (or /a /B /b); code units put uppercase first
+    expect(tree.map(node => node.path)).toEqual(["/B", "/a", "/b"]);
+  });
+
   it("nests entries under the layout whose path prefixes them", () => {
     const tree = buildRouteTree([
       entry("/(app)/dashboard"),
