@@ -1,5 +1,11 @@
 # filesystem-routing
 
+## 0.4.2
+
+### Patch Changes
+
+- d34e1e1: `buildRouteTree` breaks ties between sibling routes of equal path length by UTF-16 code unit instead of `localeCompare`, so the tree, and the declarations generated from it, come out in the same order on every machine whatever its locale. This matches the order the scan already sorts route files in.
+
 ## 0.4.1
 
 ### Patch Changes
