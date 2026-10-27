@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BaseFileSystemRouter, PageFileSystemRouter, routePathFromFile } from "../src/index.ts";
+import { stripRouteGroups } from "../src/tree.ts";
 
 describe("routePathFromFile", () => {
   it("maps index files to their directory path", () => {
@@ -37,6 +38,13 @@ describe("routePathFromFile", () => {
     expect(routePathFromFile("/blog/reindex")).toBe("/blog/reindex");
     expect(routePathFromFile("/reindex/index")).toBe("/reindex/");
     expect(routePathFromFile("/[id]/index")).toBe("/:id/");
+  });
+
+  it("strips index after group prefixes in the same segment", () => {
+    expect(routePathFromFile("/(0)index")).toBe("/(0)");
+    expect(routePathFromFile("/(2)concepts/(0)index")).toBe("/(2)concepts/(0)");
+    expect(routePathFromFile("/(a)(b)index")).toBe("/(a)(b)");
+    expect(routePathFromFile("/(0)reindex")).toBe("/(0)reindex");
   });
 });
 
@@ -89,6 +97,20 @@ describe("PageFileSystemRouter", () => {
     expect(post.page).toBe(true);
     expect(post.$component?.pick).toEqual(["default", "$css"]);
     expect(post.$$route?.pick).toEqual(["route"]);
+  });
+
+  // SolidBase orders pages with group prefixes, e.g. `(0)index.mdx`.
+  it("maps group-prefixed index files to their directory path", async () => {
+    const dir = createRouteTree({
+      "(0)index.tsx": "export default () => <h1>Home</h1>;",
+      "(1)docs/(0)index.tsx": "export default () => <h1>Docs</h1>;",
+      "(1)docs/(1)intro.tsx": "export default () => <h1>Intro</h1>;"
+    });
+    const router = new PageFileSystemRouter({ dir, extensions: ["tsx"] });
+
+    const paths = (await router.getRoutes()).map(route => stripRouteGroups(route.path)).sort();
+
+    expect(paths).toEqual(["/", "/docs/", "/docs/intro"]);
   });
 
   it("keeps route files whose names end in index at their own path", async () => {
