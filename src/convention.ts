@@ -14,8 +14,9 @@ export function routePathFromFile(routeFile: string): string {
   const routePath = routeFile
     // remove the initial slash
     .slice(1)
-    // only strip a whole `index` segment, not a name that merely ends in "index" (e.g. `reindex`)
-    .replace(/(^|\/)index$/, "$1")
+    // only strip a whole `index` segment, not a name that merely ends in "index" (e.g. `reindex`);
+    // group prefixes such as SolidBase's `(0)index` ordering stay for the adapters to strip
+    .replace(/(^|\/)((?:\([^/()]*\))*)index$/, "$1$2")
     .replace(/\[([^/]+)\]/g, (_, m) => {
       if (m.length > 3 && m.startsWith("...")) {
         return `*${m.slice(3)}`;
