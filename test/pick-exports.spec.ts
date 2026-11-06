@@ -372,8 +372,7 @@ describe("pickExports compared with the Babel pass", () => {
   }
 });
 
-// Each of these is a case where the Babel pass emits broken code or depends on
-// statement order; the assertions on `babel()` pin why the output differs.
+// The assertions on `babel()` pin what the Babel pass emits in each case.
 describe("pickExports where it deliberately differs from the Babel pass", () => {
   it("keeps array pattern elements at their positions", () => {
     const code = `
@@ -441,6 +440,18 @@ describe("pickExports where it deliberately differs from the Babel pass", () => 
     expect(pick(code, ["GET"])).toContain("function helper()");
   });
 
+  it.each([
+    ["call argument", "foo(a = function () {});", "foo();"],
+    ["initializer", "const b = (a = function () {}); foo(b);", "const b;"],
+    ["class field", "new (class { x = (a = () => 1); })();", "x;"],
+    ["arrow body", "foo(() => a = function () {});", "foo(() => {});"]
+  ])("keeps the target of an assignment that is not a statement: %s", (_, statement, emitted) => {
+    const code = `export let a; ${statement} export const GET = 1;`;
+    expect(babel(code, ["GET"])).toContain(emitted);
+    expect(pick(code, ["GET"])).toContain("let a;");
+    expect(pick(code, ["GET"])).toContain(statement);
+  });
+
   it("removes an unpicked specifier's declaration wherever it is written", () => {
     const before = `
       import { db } from "./db.ts";
@@ -469,11 +480,27 @@ describe("pickExports where it deliberately differs from the Babel pass", () => 
         }
       };
     `;
+    expect(() => babel(code, ["GET"])).toThrow(/Property left of ForOfStatement/);
     expect(pick(code, ["GET"])).toContain("for (const item of items())");
   });
 });
 
 describe("pickExports", () => {
+  it("resolves a switch discriminant outside the switch's scope", () => {
+    const code = `
+      export const value = 1;
+      export const GET = () => {
+        switch (value) {
+          default:
+            let value = 2;
+            return value;
+        }
+      };
+    `;
+    expect(pick(code, ["GET"])).toContain("const value = 1");
+    expect(normalize(pick(code, ["GET"])!)).toEqual(normalize(babel(code, ["GET"])!));
+  });
+
   it("keeps the source text of what stays", () => {
     const code = `export   const GET=()=>'ok' // trailing\n\nexport const POST = 1\n`;
     expect(pick(code, ["GET"])).toBe(`export   const GET=()=>'ok' // trailing\n\n`);

@@ -24,9 +24,9 @@ interface Scope {
 interface Tree {
   parents: Map<Node, Node>;
   removed: Set<Node>;
-  /** Export wrappers that no longer export their declaration. */
+  // Export wrappers that no longer export their declaration.
   unexported: Set<Node>;
-  /** Declarators split out of a mixed `export const a = 1, b = 2`. */
+  // Declarators split out of a mixed `export const a = 1, b = 2`.
   localDeclarators: Set<Node>;
 }
 
@@ -92,6 +92,10 @@ function isFunctionLike(node: Node) {
 
 function isClassLike(node: Node) {
   return node.type === "ClassDeclaration" || node.type === "ClassExpression";
+}
+
+function isNamedDeclaration(node: Node) {
+  return node.type === "FunctionDeclaration" || node.type === "ClassDeclaration";
 }
 
 function isExportWrapper(node: Node) {
@@ -204,7 +208,6 @@ function lookup(start: Scope | undefined, name: string): Binding | undefined {
   }
 }
 
-/** Resolves every binding of the tree as it currently stands, skipping removed nodes. */
 function crawl(program: Node, tree: Tree) {
   const { parents, removed, unexported, localDeclarators } = tree;
   const scopes = new Map<Node, Scope>();
@@ -226,7 +229,7 @@ function crawl(program: Node, tree: Tree) {
   const declareExportReferences = (node: Node, scope: Scope) => {
     const declaration = node.declaration;
     if (!declaration || unexported.has(node)) return;
-    if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") {
+    if (isNamedDeclaration(declaration)) {
       if (declaration.id) references.push([declaration.id.name, scope, node]);
     } else if (declaration.type === "VariableDeclaration") {
       for (const declarator of declaration.declarations) {
@@ -330,11 +333,17 @@ function crawl(program: Node, tree: Tree) {
         visitChildren(node, inner);
         return;
       }
+      case "SwitchStatement": {
+        visit(node.discriminant, scope);
+        const inner = childScope(scope);
+        scopes.set(node, inner);
+        for (const switchCase of node.cases) visit(switchCase, inner);
+        return;
+      }
       case "ForInStatement":
       case "ForOfStatement":
       case "ForStatement":
       case "BlockStatement":
-      case "SwitchStatement":
       case "WhileStatement":
       case "DoWhileStatement": {
         const inner = childScope(scope);
@@ -369,12 +378,9 @@ function crawl(program: Node, tree: Tree) {
   for (const [name, scope, node] of references) lookup(scope, name)?.references.push(node);
   for (const [name, scope, node] of violations) lookup(scope, name)?.violations.push(node);
 
-  /** Resolves a declaring or assigned identifier from where it is written. */
   const bindingOf = (identifier: Node): Binding | undefined => {
     let node = parents.get(identifier);
-    if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") {
-      node = parents.get(node);
-    }
+    if (isNamedDeclaration(node)) node = parents.get(node);
     while (node && !scopes.has(node)) node = parents.get(node);
     return node && lookup(scopes.get(node), identifier.name);
   };
@@ -382,11 +388,14 @@ function crawl(program: Node, tree: Tree) {
   return { bindingOf };
 }
 
-function isTypeOnly(reference: Node, parents: Map<Node, Node>) {
+function isTypeOnly(reference: Node, tree: Tree) {
+  const { parents, localDeclarators } = tree;
   for (let node = reference; node; node = parents.get(node)) {
     if (TYPE_ONLY_ANCESTORS.has(node.type)) return true;
-    if (node.type === "ExportNamedDeclaration" || node.type === "ExportSpecifier") {
-      if (node.exportKind === "type") return true;
+    if (node.type === "ExportSpecifier" && node.exportKind === "type") return true;
+    if (node.type === "ExportNamedDeclaration" && node.exportKind === "type") {
+      // The picked half of a split `export declare` is emitted as a plain export.
+      if (!node.declaration?.declarations?.some((d: Node) => localDeclarators.has(d))) return true;
     }
   }
   return false;
@@ -404,7 +413,7 @@ function isBindingReferenced(binding: Binding | undefined, tree: Tree, includeTy
   const references = binding.violations.concat(
     includeTypes
       ? binding.references
-      : binding.references.filter(reference => !isTypeOnly(reference, tree.parents))
+      : binding.references.filter(reference => !isTypeOnly(reference, tree))
   );
   if (!references.length) return false;
   if (binding.declaration.type === "FunctionDeclaration") {
@@ -413,7 +422,6 @@ function isBindingReferenced(binding: Binding | undefined, tree: Tree, includeTy
   return true;
 }
 
-/** The name a function or class is bound to: its assignment target, or its own id. */
 function boundIdentifier(node: Node, parents: Map<Node, Node>): Node | null {
   const parent = parents.get(node);
   if (parent.type === "VariableDeclarator")
@@ -425,7 +433,7 @@ function boundIdentifier(node: Node, parents: Map<Node, Node>): Node | null {
   return node.id?.type === "Identifier" ? node.id : null;
 }
 
-/** A function or class expression's own name cannot leave it, so it never decides liveness. */
+// A function or class expression's own name cannot leave it, so it never decides liveness.
 function isOwnExpressionName(identifier: Node, parents: Map<Node, Node>) {
   const parent = parents.get(identifier);
   return (
@@ -434,7 +442,14 @@ function isOwnExpressionName(identifier: Node, parents: Map<Node, Node>) {
   );
 }
 
-/** Identifiers of a destructuring pattern that the sweep may drop on their own. */
+// Only an assignment that is its own statement can be removed with its target.
+function isInlineAssignment(identifier: Node, parents: Map<Node, Node>) {
+  const parent = parents.get(identifier);
+  return (
+    parent.type === "AssignmentExpression" && parents.get(parent).type !== "ExpressionStatement"
+  );
+}
+
 function patternLocals(pattern: Node): [slot: Node, local: Node][] {
   if (pattern.type === "ObjectPattern") {
     return pattern.properties.flatMap((property: Node) => {
@@ -453,6 +468,29 @@ function patternLocals(pattern: Node): [slot: Node, local: Node][] {
 
 function exportedName(specifier: Node): string {
   return specifier.exported.name ?? specifier.exported.value;
+}
+
+function removeStatement(node: Node, tree: Tree) {
+  tree.removed.add(node);
+  const parent = tree.parents.get(node);
+  if (isExportWrapper(parent)) tree.removed.add(parent);
+}
+
+function removeDeclarator(declarator: Node, tree: Tree) {
+  const { parents, removed } = tree;
+  const declaration = parents.get(declarator);
+  const owner = parents.get(declaration);
+  // `for (const x of y)` has no valid form without its declaration.
+  if (
+    (owner.type === "ForInStatement" || owner.type === "ForOfStatement") &&
+    owner.left === declaration
+  ) {
+    return false;
+  }
+  removed.add(declarator);
+  if (declaration.declarations.every((d: Node) => removed.has(d)))
+    removeStatement(declaration, tree);
+  return true;
 }
 
 export function pickExports(
@@ -500,10 +538,7 @@ export function pickExports(
         if (pick.includes("default")) break;
         const declaration = node.declaration;
         // A named declaration creates a binding that picked exports may reference.
-        if (
-          (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") &&
-          declaration.id
-        ) {
+        if (isNamedDeclaration(declaration) && declaration.id) {
           unexported.add(node);
           candidates.add(declaration.id);
         } else {
@@ -520,10 +555,7 @@ export function pickExports(
           break;
         }
         const declaration = node.declaration;
-        if (
-          declaration?.type === "FunctionDeclaration" ||
-          declaration?.type === "ClassDeclaration"
-        ) {
+        if (declaration && isNamedDeclaration(declaration)) {
           if (declaration.id && !pick.includes(declaration.id.name)) {
             unexported.add(node);
             candidates.add(declaration.id);
@@ -533,8 +565,6 @@ export function pickExports(
             if (declarator.id.type === "Identifier" && !pick.includes(declarator.id.name)) {
               localDeclarators.add(declarator);
               candidates.add(declarator.id);
-              // The picked half of a split `export declare` is emitted as a plain export.
-              node.exportKind = "value";
             }
           }
         }
@@ -543,8 +573,7 @@ export function pickExports(
     }
   }
 
-  // Only identifiers referenced in the original module may be swept, so code
-  // that was already unused (and may run for its side effects) stays.
+  // Code that was already unused may run for its side effects, so it stays.
   const sweepable = new Set<Node>(candidates);
   const markIfReferenced = (identifier: Node) => {
     if (isBindingReferenced(before.bindingOf(identifier), tree, true)) sweepable.add(identifier);
@@ -566,27 +595,7 @@ export function pickExports(
   };
   collect(program);
 
-  const removeStatement = (node: Node) => {
-    removed.add(node);
-    const parent = parents.get(node);
-    if (isExportWrapper(parent)) removed.add(parent);
-  };
-  const removeDeclarator = (declarator: Node) => {
-    const declaration = parents.get(declarator);
-    const owner = parents.get(declaration);
-    // `for (const x of y)` has no valid form without its declaration.
-    if (
-      (owner.type === "ForInStatement" || owner.type === "ForOfStatement") &&
-      owner.left === declaration
-    ) {
-      return false;
-    }
-    removed.add(declarator);
-    if (declaration.declarations.every((d: Node) => removed.has(d))) removeStatement(declaration);
-    return true;
-  };
-
-  removeUnreachable(program, tree, sweepable, candidates, removeStatement, removeDeclarator);
+  removeUnreachable(program, tree, sweepable, candidates);
 
   let changed: boolean;
   do {
@@ -598,26 +607,26 @@ export function pickExports(
       if (removed.has(node)) return;
       if (node.type === "VariableDeclarator") {
         if (node.id.type === "Identifier") {
-          if (isDead(node.id) && removeDeclarator(node)) changed = true;
+          if (isDead(node.id) && removeDeclarator(node, tree)) changed = true;
         } else if (node.id.type === "ObjectPattern") {
-          changed = sweepObjectPattern(node, isDead, tree, removeDeclarator) || changed;
+          changed = sweepObjectPattern(node, isDead, tree) || changed;
         } else if (node.id.type === "ArrayPattern") {
-          changed = sweepArrayPattern(node, isDead, tree, removeDeclarator) || changed;
+          changed = sweepArrayPattern(node, isDead, tree) || changed;
         }
       } else if (isFunctionLike(node) || isClassLike(node)) {
         const identifier = boundIdentifier(node, parents);
         if (identifier && !isOwnExpressionName(identifier, parents) && isDead(identifier)) {
           const parent = parents.get(node);
           if (parent.type === "VariableDeclarator") {
-            changed = removeDeclarator(parent) || changed;
+            changed = removeDeclarator(parent, tree) || changed;
           } else if (parent.type === "AssignmentExpression") {
             const statement = parents.get(parent);
             if (statement.type === "ExpressionStatement") {
-              removeStatement(statement);
+              removeStatement(statement, tree);
               changed = true;
             }
           } else {
-            removeStatement(node);
+            removeStatement(node, tree);
             changed = true;
           }
         }
@@ -648,19 +657,8 @@ export function pickExports(
   };
 }
 
-/**
- * References alone cannot tell live bindings from dead cycles, so this builds
- * a graph of the tracked bindings and removes the candidates that runtime code
- * outside the graph cannot reach.
- */
-function removeUnreachable(
-  program: Node,
-  tree: Tree,
-  sweepable: Set<Node>,
-  candidates: Set<Node>,
-  removeStatement: (node: Node) => void,
-  removeDeclarator: (node: Node) => boolean
-) {
+// References alone cannot tell live bindings from dead cycles, so this walks a graph of them.
+function removeUnreachable(program: Node, tree: Tree, sweepable: Set<Node>, candidates: Set<Node>) {
   const { parents, removed, unexported, localDeclarators } = tree;
   const { bindingOf } = crawl(program, tree);
   const tracked = new Map<Binding, Set<Node>>();
@@ -672,7 +670,9 @@ function removeUnreachable(
   };
 
   for (const identifier of sweepable) {
-    if (isOwnExpressionName(identifier, parents)) continue;
+    if (isOwnExpressionName(identifier, parents) || isInlineAssignment(identifier, parents)) {
+      continue;
+    }
     const binding = bindingOf(identifier);
     if (!binding) continue;
     addOwner(tracked, binding, parents.get(identifier));
@@ -701,7 +701,7 @@ function removeUnreachable(
 
   for (const target of tracked.keys()) {
     const references = target.violations.concat(
-      target.references.filter(reference => !isTypeOnly(reference, parents))
+      target.references.filter(reference => !isTypeOnly(reference, tree))
     );
     for (const reference of references) {
       let node = reference;
@@ -727,7 +727,7 @@ function removeUnreachable(
     if (removed.has(node)) return;
     if (node.type === "VariableDeclarator" && node.id.type === "Identifier") {
       const binding = bindingOf(node.id);
-      if (binding && dead.has(binding)) removeDeclarator(node);
+      if (binding && dead.has(binding)) removeDeclarator(node, tree);
     }
     forEachChild(node, removeDeadDeclarators);
   };
@@ -735,17 +735,12 @@ function removeUnreachable(
 
   for (const binding of dead) {
     for (const owner of candidateOwners.get(binding)!) {
-      if (owner.type !== "VariableDeclarator" && !removed.has(owner)) removeStatement(owner);
+      if (owner.type !== "VariableDeclarator" && !removed.has(owner)) removeStatement(owner, tree);
     }
   }
 }
 
-function sweepObjectPattern(
-  declarator: Node,
-  isDead: (identifier: Node) => boolean,
-  tree: Tree,
-  removeDeclarator: (node: Node) => boolean
-) {
+function sweepObjectPattern(declarator: Node, isDead: (identifier: Node) => boolean, tree: Tree) {
   const { removed } = tree;
   const { properties } = declarator.id;
   const rest = properties.at(-1);
@@ -758,17 +753,12 @@ function sweepObjectPattern(
     changed = true;
   }
   if (changed && properties.every((property: Node) => removed.has(property))) {
-    removeDeclarator(declarator);
+    removeDeclarator(declarator, tree);
   }
   return changed;
 }
 
-function sweepArrayPattern(
-  declarator: Node,
-  isDead: (identifier: Node) => boolean,
-  tree: Tree,
-  removeDeclarator: (node: Node) => boolean
-) {
+function sweepArrayPattern(declarator: Node, isDead: (identifier: Node) => boolean, tree: Tree) {
   const { removed } = tree;
   let changed = false;
   for (const [slot, local] of patternLocals(declarator.id)) {
@@ -778,7 +768,7 @@ function sweepArrayPattern(
     }
   }
   if (changed && declarator.id.elements.every((e: Node | null) => e && removed.has(e))) {
-    removeDeclarator(declarator);
+    removeDeclarator(declarator, tree);
   }
   return changed;
 }
