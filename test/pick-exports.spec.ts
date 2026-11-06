@@ -404,6 +404,18 @@ describe("pickExports where it deliberately differs from the Babel pass", () => 
     expect(pick(code, ["GET"])).toContain("const { secret, ...rest }");
   });
 
+  it("keeps a computed key of a kept object rest sibling", () => {
+    const code = `
+      export const key = "secret";
+      const { [key]: secret, ...rest } = load();
+      export const POST = () => secret;
+      export const GET = () => rest;
+    `;
+    const output = pick(code, ["GET"])!;
+    expect(output).toContain(`const key = "secret"`);
+    expect(output).toContain("[key]: secret, ...rest");
+  });
+
   it("keeps bindings used by a named function expression", () => {
     const code = `
       export const helper = () => 1;

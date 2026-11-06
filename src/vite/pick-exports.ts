@@ -446,12 +446,13 @@ function isOwnExpressionName(identifier: Node, parents: Map<Node, Node>) {
   );
 }
 
-// Only an assignment that is its own statement can be removed with its target.
-function isInlineAssignment(identifier: Node, parents: Map<Node, Node>) {
+// These stay when their binding dies, so what they reference must stay live.
+function isKeptWithDeadBinding(identifier: Node, parents: Map<Node, Node>) {
   const parent = parents.get(identifier);
-  return (
-    parent.type === "AssignmentExpression" && parents.get(parent).type !== "ExpressionStatement"
-  );
+  if (parent.type === "AssignmentExpression") {
+    return parents.get(parent).type !== "ExpressionStatement";
+  }
+  return parent.type === "Property" && parents.get(parent).properties.at(-1).type === "RestElement";
 }
 
 function patternLocals(pattern: Node): [slot: Node, local: Node][] {
@@ -675,7 +676,7 @@ function removeUnreachable(program: Node, tree: Tree, sweepable: Set<Node>, cand
   };
 
   for (const identifier of sweepable) {
-    if (isOwnExpressionName(identifier, parents) || isInlineAssignment(identifier, parents)) {
+    if (isOwnExpressionName(identifier, parents) || isKeptWithDeadBinding(identifier, parents)) {
       continue;
     }
     const binding = bindingOf(identifier);
