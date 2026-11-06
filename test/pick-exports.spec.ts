@@ -522,6 +522,29 @@ describe("pickExports", () => {
     expect(output).toContain("const kept = 1\n;");
   });
 
+  it("parses .ts modules as TypeScript without JSX", () => {
+    const code = `export const GET = <T>(x: T) => x;
+export const POST = <string>value;
+`;
+    expect(pick(code, ["GET"], "ts")).toBe(`export const GET = <T>(x: T) => x;
+`);
+  });
+
+  it.each([
+    ["qualified", "ns.Thing"],
+    ["direct", "ns"]
+  ])("keeps what a %s import alias references", (_, target) => {
+    const code = `
+      export const ns = create();
+      import Alias = ${target};
+      export const GET = () => Alias;
+    `;
+    const output = pick(code, ["GET"])!;
+    expect(output).toContain("const ns = create()");
+    expect(output).not.toContain("export const ns");
+    expect(output).toContain(`import Alias = ${target};`);
+  });
+
   it("does not trip over parenthesized sequences in JSX", () => {
     const code = `export default () => <A b={(c(), <d />)} />;\nexport const POST = 1;`;
     expect(pick(code, ["default"])).toContain("b={(c(), <d />)}");

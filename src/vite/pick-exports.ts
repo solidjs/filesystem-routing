@@ -1,6 +1,7 @@
 // All credit for this work goes to the amazing Next.js team.
 // https://github.com/vercel/next.js/blob/canary/packages/next/build/babel/plugins/next-ssg-transform.ts
 
+import { extname } from "node:path";
 import MagicString, { type SourceMap } from "magic-string";
 import { parseSync } from "oxc-parser";
 
@@ -246,7 +247,10 @@ function crawl(program: Node, tree: Tree) {
     if (removed.has(node)) return;
     switch (node.type) {
       case "TSTypeAnnotation":
+        return;
       case "TSImportEqualsDeclaration":
+        declare(scope, node.id.name, node, "declared");
+        visit(node.moduleReference, scope);
         return;
       case "Identifier":
       case "JSXIdentifier":
@@ -499,7 +503,8 @@ export function pickExports(
   pick: string[]
 ): { code: string; map: SourceMap } | undefined {
   const { program, errors } = parseSync(id, code, {
-    lang: "tsx",
+    // `<T>(x: T) => x` is valid in a .ts file and ambiguous with JSX elsewhere.
+    lang: extname(id.split("?")[0]!) === ".ts" ? "ts" : "tsx",
     astType: "ts",
     sourceType: "module"
   });
