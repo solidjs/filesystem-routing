@@ -532,10 +532,16 @@ export function pickExports(
   const before = crawl(program, tree);
 
   const candidates = new Set<Node>();
+  const cssLocals = new Set<Node>();
   for (const node of program.body as Node[]) {
     switch (node.type) {
       case "ImportDeclaration":
-        if (node.source.value.endsWith(".css") && !pick.includes("$css")) removed.add(node);
+        if (node.source.value.endsWith(".css") && !pick.includes("$css")) {
+          // A stylesheet imported for its side effect goes, but a binding such
+          // as a CSS module's class map stays while picked code reads it.
+          if (node.specifiers.length) for (const s of node.specifiers) cssLocals.add(s.local);
+          else removed.add(node);
+        }
         break;
       case "ExportAllDeclaration":
         if (node.exported && !pick.includes(exportedName(node))) removed.add(node);
@@ -580,7 +586,7 @@ export function pickExports(
   }
 
   // Code that was already unused may run for its side effects, so it stays.
-  const sweepable = new Set<Node>(candidates);
+  const sweepable = new Set<Node>([...candidates, ...cssLocals]);
   const markIfReferenced = (identifier: Node) => {
     if (isBindingReferenced(before.bindingOf(identifier), tree, true)) sweepable.add(identifier);
   };
@@ -653,8 +659,6 @@ export function pickExports(
     sweep(program);
   } while (changed);
 
-  if ((program.body as Node[]).every(node => removed.has(node))) return;
-
   const output = new MagicString(code);
   render(program, code, output, tree);
   return {
@@ -711,9 +715,18 @@ function removeUnreachable(program: Node, tree: Tree, sweepable: Set<Node>, cand
     );
     for (const reference of references) {
       let node = reference;
-      while (node && !ownerBindings.has(node)) node = parents.get(node);
-      if (node) dependencies.get(ownerBindings.get(node)!)!.add(target);
-      else live.add(target);
+      // A reference outside any function body runs when the module evaluates,
+      // even if the binding that owns it is never read again.
+      let deferred = false;
+      while (node && !ownerBindings.has(node)) {
+        if (isFunctionLike(node)) deferred = true;
+        node = parents.get(node);
+      }
+      const ownName =
+        node && (reference === node || reference === node.id || reference === node.left);
+      if (node && (deferred || ownName || isFunctionLike(node))) {
+        dependencies.get(ownerBindings.get(node)!)!.add(target);
+      } else live.add(target);
     }
   }
 

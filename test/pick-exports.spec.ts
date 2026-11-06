@@ -364,9 +364,23 @@ describe("pickExports compared with the Babel pass", () => {
       it.each(picks.map(names => [names.join("+"), names] as const))("pick %s", (_, names) => {
         const expected = babel(code, names, ext);
         const actual = pick(code, names, ext);
-        // The plugin treats Babel's empty output as "leave the module alone".
-        if (!expected) expect(actual).toBeUndefined();
-        else expect(normalize(actual!)).toEqual(normalize(expected));
+        // Babel's empty output used to mean "leave the module alone"; it is now
+        // an empty module. Babel also dropped CSS module imports that picked
+        // code still reads, which this pass keeps (pinned below).
+        const withoutCssBindings = (body: any[]) =>
+          names.includes("$css")
+            ? body
+            : body.filter(
+                node =>
+                  !(
+                    node.type === "ImportDeclaration" &&
+                    node.source.value.endsWith(".css") &&
+                    node.specifiers.length
+                  )
+              );
+        expect(withoutCssBindings(normalize(actual!))).toEqual(
+          expected ? normalize(expected) : []
+        );
       });
     });
   }
@@ -518,8 +532,41 @@ describe("pickExports", () => {
     expect(pick(code, ["GET"])).toBe(`export   const GET=()=>'ok' // trailing\n\n`);
   });
 
-  it("leaves the module alone when nothing would remain", () => {
-    expect(pick(`export const POST = () => 1;`, ["GET"])).toBeUndefined();
+  it("empties the module when nothing would remain", () => {
+    // Leaving it alone would ship every unpicked export, server code included.
+    const code = `import { db } from "./db";\nexport const POST = () => db.write();`;
+    expect(pick(code, ["GET"])).toBe("");
+    expect(babel(code, ["GET"])).toBe("");
+  });
+
+  it("keeps a CSS module import that picked code reads", () => {
+    const code = [
+      `import styles from "./page.module.css";`,
+      `import unused from "./unused.module.css";`,
+      `import "./page.css";`,
+      `export const GET = () => unused.x;`,
+      `export default function Page() { return <div class={styles.title} />; }`
+    ].join("\n");
+    expect(pick(code, ["default"])).toBe(
+      `import styles from "./page.module.css";\n` +
+        `export default function Page() { return <div class={styles.title} />; }`
+    );
+    // Babel dropped the import and left `styles` undefined.
+    expect(babel(code, ["default"])).not.toContain("page.module.css");
+  });
+
+  it("keeps an export that a dead binding calls while the module evaluates", () => {
+    const code = [
+      `export function GET() { return 1; }`,
+      `const a = [GET(), () => b];`,
+      `const b = () => a;`,
+      `export default function Page() { return 1; }`
+    ].join("\n");
+    const output = pick(code, ["default"])!;
+    expect(output).toContain("function GET()");
+    expect(output).not.toContain("export function GET");
+    // Babel removed GET, so evaluating the module threw a ReferenceError.
+    expect(babel(code, ["default"])).not.toContain("function GET");
   });
 
   it("reads source positions in UTF-16 code units", () => {
