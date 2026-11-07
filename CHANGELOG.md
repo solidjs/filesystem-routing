@@ -1,5 +1,15 @@
 # filesystem-routing
 
+## 0.5.0
+
+### Minor Changes
+
+- 65f54a1: Remove the Babel dependency. The `?pick=` pass now parses with `oxc-parser` and edits with `magic-string`, so the source text of kept code is preserved rather than reprinted. `@babel/core`, `@types/babel__core` and `@types/babel__traverse` are no longer installed. Four cases where the Babel pass produced wrong code now behave correctly: removing an element of an array pattern no longer shifts the elements after it (`const [read, write]` could become `const [write]`), siblings of a live object rest element stay so `rest` keeps its contents, named function expressions keep the bindings they use, and a function whose body declares its own name is no longer treated as unreferenced or removed while in use. The result also no longer depends on whether an unpicked `export { name }` is written before or after the declaration of `name`. Decorators now parse, and `.ts` modules parse without JSX, so `<T>(x: T) => x` is accepted and JSX in a `.ts` file is a syntax error.
+
+### Patch Changes
+
+- 6008bca: Fix three cases where a `?pick=` module could break or ship unpicked code. When nothing is left after picking, the module is now empty instead of being served whole, so unpicked exports and their imports no longer ship. A CSS module import such as `import styles from "./page.module.css"` now stays while picked code reads it, instead of being removed with the stylesheet imports and leaving `styles` undefined. An unpicked export that a dead binding calls while the module evaluates, such as `const a = [GET(), () => b]`, is now kept instead of removed, which used to throw a `ReferenceError`.
+
 ## 0.4.2
 
 ### Patch Changes
