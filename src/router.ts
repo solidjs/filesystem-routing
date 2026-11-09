@@ -4,7 +4,12 @@ import { convertPathToPattern, globSync } from "tinyglobby";
 
 import type { RouteManifestEntry } from "./manifest.ts";
 
-export const glob = (path: string) => globSync(path, { absolute: true, expandDirectories: false });
+// tinyglobby skips symlinked dirs when cwd is not a path ancestor of the pattern
+const patternRoot = (path: string) =>
+  /^[A-Za-z]:\//.exec(path)?.[0] ?? (path.startsWith("/") ? "/" : undefined);
+
+export const glob = (path: string) =>
+  globSync(path, { absolute: true, cwd: patternRoot(path), expandDirectories: false });
 
 /** Normalize a file path to posix separators (bundler-agnostic). */
 export function normalizePath(path: string) {

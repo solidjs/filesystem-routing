@@ -162,6 +162,20 @@ describe("PageFileSystemRouter", () => {
     expect(router.routes.map(route => route.path).sort()).toEqual(["/", "/blog/:id", "/contact"]);
   });
 
+  it("scans symlinked subdirectories when the dir is reached through a symlink", async () => {
+    const root = createRouteTree({
+      "real/routes/index.tsx": "export default () => <h1>Home</h1>;",
+      "real/shared/index.tsx": "export default () => <h1>Shared</h1>;"
+    });
+    fs.symlinkSync(path.join(root, "real"), path.join(root, "link"), "junction");
+    fs.symlinkSync(path.join(root, "link/shared"), path.join(root, "real/routes/shared"), "junction");
+    const router = new PageFileSystemRouter({
+      dir: path.join(root, "link/routes"),
+      extensions: ["tsx"]
+    });
+    expect((await router.getRoutes()).map(route => route.path).sort()).toEqual(["/", "/shared/"]);
+  });
+
   it("updates the manifest when files change or are removed", async () => {
     const dir = createRouteTree({
       "index.tsx": "export default () => <h1>Home</h1>;"
