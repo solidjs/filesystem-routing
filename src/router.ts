@@ -1,10 +1,15 @@
-import fg from "fast-glob";
-import micromatch from "micromatch";
 import { posix, resolve, sep } from "node:path";
+import picomatch from "picomatch";
+import { convertPathToPattern, globSync } from "tinyglobby";
 
 import type { RouteManifestEntry } from "./manifest.ts";
 
-export const glob = (path: string) => fg.sync(path, { absolute: true });
+// tinyglobby skips symlinked dirs when cwd is not a path ancestor of the pattern
+const patternRoot = (path: string) =>
+  /^[A-Za-z]:\//.exec(path)?.[0] ?? (path.startsWith("/") ? "/" : undefined);
+
+export const glob = (path: string) =>
+  globSync(path, { absolute: true, cwd: patternRoot(path), expandDirectories: false });
 
 /** Normalize a file path to posix separators (bundler-agnostic). */
 export function normalizePath(path: string) {
@@ -67,7 +72,7 @@ export class BaseFileSystemRouter extends EventTarget {
     super();
     this.routes = [];
     // A relative dir would glob fine, but the matched files come back
-    // absolute and would then fail `isRoute`'s micromatch against the
+    // absolute and would then fail `isRoute`'s match against the
     // relative pattern, silently yielding zero routes.
     this.config = { ...config, dir: normalizePath(resolve(config.dir)) };
   }
@@ -76,7 +81,7 @@ export class BaseFileSystemRouter extends EventTarget {
     const extensions = this.config.extensions;
     // a single-entry brace pattern like `.{tsx}` is treated as a literal
     const suffix = extensions.length === 1 ? `.${extensions[0]}` : `.{${extensions.join(",")}}`;
-    return posix.join(fg.convertPathToPattern(this.config.dir), "**/*") + suffix;
+    return posix.join(convertPathToPattern(this.config.dir), "**/*") + suffix;
   }
 
   async buildRoutes(): Promise<RouteManifestEntry[]> {
@@ -88,7 +93,8 @@ export class BaseFileSystemRouter extends EventTarget {
   }
 
   isRoute(src: string) {
-    return Boolean(micromatch(src as any, this.glob())?.length);
+    // src is already posix; Windows mode would read the pattern's escapes as separators
+    return picomatch.isMatch(src, this.glob(), { windows: false });
   }
 
   toPath(src: string): string | undefined {

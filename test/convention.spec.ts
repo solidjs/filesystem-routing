@@ -142,6 +142,40 @@ describe("PageFileSystemRouter", () => {
     }
   });
 
+  it("scans and watches a dir whose path contains glob characters", async () => {
+    const root = createRouteTree({
+      "it's (app) [x] {y}/routes/index.tsx": "export default () => <h1>Home</h1>;",
+      "it's (app) [x] {y}/routes/blog/[id].ts": "export default () => <h1>Post</h1>;",
+      "it's (app) [x] {y}/routes/.draft.tsx": "export default () => <h1>Draft</h1>;",
+      "it's (app) [x] {y}/routes/notes.md": "# Notes",
+      "it's (app) [x] {y}/other/stray.tsx": "export default () => <h1>Stray</h1>;"
+    });
+    const dir = path.join(root, "it's (app) [x] {y}", "routes");
+    const router = new PageFileSystemRouter({ dir, extensions: ["tsx", "ts"] });
+    expect((await router.getRoutes()).map(route => route.path).sort()).toEqual(["/", "/blog/:id"]);
+
+    const contact = path.join(dir, "contact.tsx");
+    fs.writeFileSync(contact, "export default () => <h1>Contact</h1>;");
+    await router.addRoute(contact);
+    await router.addRoute(path.join(dir, "notes.md"));
+    await router.addRoute(path.join(root, "it's (app) [x] {y}", "other", "stray.tsx"));
+    expect(router.routes.map(route => route.path).sort()).toEqual(["/", "/blog/:id", "/contact"]);
+  });
+
+  it("scans symlinked subdirectories when the dir is reached through a symlink", async () => {
+    const root = createRouteTree({
+      "real/routes/index.tsx": "export default () => <h1>Home</h1>;",
+      "real/shared/index.tsx": "export default () => <h1>Shared</h1>;"
+    });
+    fs.symlinkSync(path.join(root, "real"), path.join(root, "link"), "junction");
+    fs.symlinkSync(path.join(root, "link/shared"), path.join(root, "real/routes/shared"), "junction");
+    const router = new PageFileSystemRouter({
+      dir: path.join(root, "link/routes"),
+      extensions: ["tsx"]
+    });
+    expect((await router.getRoutes()).map(route => route.path).sort()).toEqual(["/", "/shared/"]);
+  });
+
   it("updates the manifest when files change or are removed", async () => {
     const dir = createRouteTree({
       "index.tsx": "export default () => <h1>Home</h1>;"
